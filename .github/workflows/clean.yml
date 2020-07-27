@@ -1,0 +1,14 @@
+name: Clean
+on: delete
+
+jobs:
+  clean-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: release/master
+      - uses: ./
+        with:
+          github-token: ${{ github.token }}
+          clean: true

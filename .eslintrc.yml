@@ -1,0 +1,23 @@
+root: true
+plugins:
+  - github
+extends:
+  - plugin:github/recommended
+parserOptions:
+  ecmaVersion: 2019
+env:
+  node: true
+  es2017: true
+rules:
+  camelcase: off
+  github/no-then: off
+overrides:
+  - files: '**/*.test.js'
+    plugins:
+      - jest
+    extends:
+      - plugin:jest/recommended
+ignorePatterns:
+  - dist/
+  - lib/
+  - node_modules/

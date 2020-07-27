@@ -1,0 +1,26 @@
+name: Release
+on:
+  push:
+    branches-ignore:
+      - release/**
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Build
+        run: |
+          echo ::group::install deps
+          npm ci
+          echo ::group::lint
+          npm run lint
+          echo ::group::test
+          npm test
+          echo ::group::pack
+          npm run pack
+      - uses: ./
+        with:
+          github-token: ${{ github.token }}

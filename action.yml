@@ -1,0 +1,13 @@
+name: Release Action
+description: Release action with semantic release
+author: PlayStudios
+inputs:
+  github-token:
+    description: GitHub token
+    required: true
+  clean:
+    description: Clean up obsolete release branches
+    required: false
+runs:
+  using: node12
+  main: dist/index.js
