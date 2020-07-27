@@ -31,7 +31,7 @@ jobs:
           npm run pack
       - uses: playstudios/action-runner
         with:
-          action: release-action
+          action: release-action@v1
           repo-token: ${{ secrets.REPO_TOKEN }}
           github-token: ${{ github.token }}
 ```
@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: playstudios/action-runner
         with:
-          action: release-action
+          action: release-action@v1
           repo-token: ${{ secrets.REPO_TOKEN }}
           github-token: ${{ github.token }}
           clean: true
