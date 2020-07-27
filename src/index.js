@@ -86,14 +86,16 @@ const release = async () => {
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
     await shell(`npm i ${modules.join(' ')}`)
-    await semanticRelease(options, {
+    const result = await semanticRelease(options, {
       env: {
         ...process.env,
         GITHUB_TOKEN: core.getInput('github-token'),
         GITHUB_REF: branch,
       },
     })
-    await shell('git push -f origin HEAD:refs/tags/$(git describe --tags --exact-match --abbrev | cut -d. -f1)')
+    if (result) {
+      await shell('git push -f origin HEAD:refs/tags/$(git describe --tags --exact-match --abbrev | cut -d. -f1)')
+    }
   } else {
     await shell('git add -A')
     await shell("git commit -m 'chore(release): generate dist files'")
