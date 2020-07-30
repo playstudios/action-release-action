@@ -29,10 +29,8 @@ jobs:
           npm test
           echo ::group::pack
           npm run pack
-      - uses: playstudios/action-runner
+      - uses: playstudios/action-release-action@v1
         with:
-          action: release-action@v1
-          repo-token: ${{ secrets.REPO_TOKEN }}
           github-token: ${{ github.token }}
 ```
 
@@ -46,10 +44,8 @@ jobs:
   clean-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: playstudios/action-runner
+      - uses: playstudios/action-release-action@v1
         with:
-          action: release-action@v1
-          repo-token: ${{ secrets.REPO_TOKEN }}
           github-token: ${{ github.token }}
           clean: true
 ```
