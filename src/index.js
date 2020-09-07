@@ -50,7 +50,7 @@ const release = async () => {
   await shell('git config user.name psa-builder')
   await shell('git config user.email admin-group@playstudios.asia')
 
-  if (github.context.ref === 'refs/heads/master') {
+  if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
     await shell('git merge -')
