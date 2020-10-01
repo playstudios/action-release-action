@@ -6,7 +6,7 @@
     "pack": "ncc build"
   },
   "dependencies": {
-    "@actions/core": "^1.2.4",
+    "@actions/core": "^1.2.6",
     "@actions/github": "^4.0.0",
     "execa": "^4.0.3",
     "semantic-release": "^17.1.1"
