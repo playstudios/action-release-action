@@ -51,7 +51,7 @@ const release = async () => {
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
-    await shell('git merge -')
+    await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
     await shell('git checkout stash^3 .')
     const options = {
       branches: [branch],
