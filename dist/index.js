@@ -51,7 +51,352 @@ module.exports =
 /************************************************************************/
 /******/ ([
 /* 0 */,
-/* 1 */,
+/* 1 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+const path = __webpack_require__(622);
+const scan = __webpack_require__(314);
+const parse = __webpack_require__(806);
+const utils = __webpack_require__(224);
+const constants = __webpack_require__(446);
+const isObject = val => val && typeof val === 'object' && !Array.isArray(val);
+
+/**
+ * Creates a matcher function from one or more glob patterns. The
+ * returned function takes a string to match as its first argument,
+ * and returns true if the string is a match. The returned matcher
+ * function also takes a boolean as the second argument that, when true,
+ * returns an object with additional information.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch(glob[, options]);
+ *
+ * const isMatch = picomatch('*.!(*a)');
+ * console.log(isMatch('a.a')); //=> false
+ * console.log(isMatch('a.b')); //=> true
+ * ```
+ * @name picomatch
+ * @param {String|Array} `globs` One or more glob patterns.
+ * @param {Object=} `options`
+ * @return {Function=} Returns a matcher function.
+ * @api public
+ */
+
+const picomatch = (glob, options, returnState = false) => {
+  if (Array.isArray(glob)) {
+    const fns = glob.map(input => picomatch(input, options, returnState));
+    const arrayMatcher = str => {
+      for (const isMatch of fns) {
+        const state = isMatch(str);
+        if (state) return state;
+      }
+      return false;
+    };
+    return arrayMatcher;
+  }
+
+  const isState = isObject(glob) && glob.tokens && glob.input;
+
+  if (glob === '' || (typeof glob !== 'string' && !isState)) {
+    throw new TypeError('Expected pattern to be a non-empty string');
+  }
+
+  const opts = options || {};
+  const posix = utils.isWindows(options);
+  const regex = isState
+    ? picomatch.compileRe(glob, options)
+    : picomatch.makeRe(glob, options, false, true);
+
+  const state = regex.state;
+  delete regex.state;
+
+  let isIgnored = () => false;
+  if (opts.ignore) {
+    const ignoreOpts = { ...options, ignore: null, onMatch: null, onResult: null };
+    isIgnored = picomatch(opts.ignore, ignoreOpts, returnState);
+  }
+
+  const matcher = (input, returnObject = false) => {
+    const { isMatch, match, output } = picomatch.test(input, regex, options, { glob, posix });
+    const result = { glob, state, regex, posix, input, output, match, isMatch };
+
+    if (typeof opts.onResult === 'function') {
+      opts.onResult(result);
+    }
+
+    if (isMatch === false) {
+      result.isMatch = false;
+      return returnObject ? result : false;
+    }
+
+    if (isIgnored(input)) {
+      if (typeof opts.onIgnore === 'function') {
+        opts.onIgnore(result);
+      }
+      result.isMatch = false;
+      return returnObject ? result : false;
+    }
+
+    if (typeof opts.onMatch === 'function') {
+      opts.onMatch(result);
+    }
+    return returnObject ? result : true;
+  };
+
+  if (returnState) {
+    matcher.state = state;
+  }
+
+  return matcher;
+};
+
+/**
+ * Test `input` with the given `regex`. This is used by the main
+ * `picomatch()` function to test the input string.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch.test(input, regex[, options]);
+ *
+ * console.log(picomatch.test('foo/bar', /^(?:([^/]*?)\/([^/]*?))$/));
+ * // { isMatch: true, match: [ 'foo/', 'foo', 'bar' ], output: 'foo/bar' }
+ * ```
+ * @param {String} `input` String to test.
+ * @param {RegExp} `regex`
+ * @return {Object} Returns an object with matching info.
+ * @api public
+ */
+
+picomatch.test = (input, regex, options, { glob, posix } = {}) => {
+  if (typeof input !== 'string') {
+    throw new TypeError('Expected input to be a string');
+  }
+
+  if (input === '') {
+    return { isMatch: false, output: '' };
+  }
+
+  const opts = options || {};
+  const format = opts.format || (posix ? utils.toPosixSlashes : null);
+  let match = input === glob;
+  let output = (match && format) ? format(input) : input;
+
+  if (match === false) {
+    output = format ? format(input) : input;
+    match = output === glob;
+  }
+
+  if (match === false || opts.capture === true) {
+    if (opts.matchBase === true || opts.basename === true) {
+      match = picomatch.matchBase(input, regex, options, posix);
+    } else {
+      match = regex.exec(output);
+    }
+  }
+
+  return { isMatch: Boolean(match), match, output };
+};
+
+/**
+ * Match the basename of a filepath.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch.matchBase(input, glob[, options]);
+ * console.log(picomatch.matchBase('foo/bar.js', '*.js'); // true
+ * ```
+ * @param {String} `input` String to test.
+ * @param {RegExp|String} `glob` Glob pattern or regex created by [.makeRe](#makeRe).
+ * @return {Boolean}
+ * @api public
+ */
+
+picomatch.matchBase = (input, glob, options, posix = utils.isWindows(options)) => {
+  const regex = glob instanceof RegExp ? glob : picomatch.makeRe(glob, options);
+  return regex.test(path.basename(input));
+};
+
+/**
+ * Returns true if **any** of the given glob `patterns` match the specified `string`.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch.isMatch(string, patterns[, options]);
+ *
+ * console.log(picomatch.isMatch('a.a', ['b.*', '*.a'])); //=> true
+ * console.log(picomatch.isMatch('a.a', 'b.*')); //=> false
+ * ```
+ * @param {String|Array} str The string to test.
+ * @param {String|Array} patterns One or more glob patterns to use for matching.
+ * @param {Object} [options] See available [options](#options).
+ * @return {Boolean} Returns true if any patterns match `str`
+ * @api public
+ */
+
+picomatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
+
+/**
+ * Parse a glob pattern to create the source string for a regular
+ * expression.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * const result = picomatch.parse(pattern[, options]);
+ * ```
+ * @param {String} `pattern`
+ * @param {Object} `options`
+ * @return {Object} Returns an object with useful properties and output to be used as a regex source string.
+ * @api public
+ */
+
+picomatch.parse = (pattern, options) => {
+  if (Array.isArray(pattern)) return pattern.map(p => picomatch.parse(p, options));
+  return parse(pattern, { ...options, fastpaths: false });
+};
+
+/**
+ * Scan a glob pattern to separate the pattern into segments.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch.scan(input[, options]);
+ *
+ * const result = picomatch.scan('!./foo/*.js');
+ * console.log(result);
+ * { prefix: '!./',
+ *   input: '!./foo/*.js',
+ *   start: 3,
+ *   base: 'foo',
+ *   glob: '*.js',
+ *   isBrace: false,
+ *   isBracket: false,
+ *   isGlob: true,
+ *   isExtglob: false,
+ *   isGlobstar: false,
+ *   negated: true }
+ * ```
+ * @param {String} `input` Glob pattern to scan.
+ * @param {Object} `options`
+ * @return {Object} Returns an object with
+ * @api public
+ */
+
+picomatch.scan = (input, options) => scan(input, options);
+
+/**
+ * Create a regular expression from a parsed glob pattern.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * const state = picomatch.parse('*.js');
+ * // picomatch.compileRe(state[, options]);
+ *
+ * console.log(picomatch.compileRe(state));
+ * //=> /^(?:(?!\.)(?=.)[^/]*?\.js)$/
+ * ```
+ * @param {String} `state` The object returned from the `.parse` method.
+ * @param {Object} `options`
+ * @return {RegExp} Returns a regex created from the given pattern.
+ * @api public
+ */
+
+picomatch.compileRe = (parsed, options, returnOutput = false, returnState = false) => {
+  if (returnOutput === true) {
+    return parsed.output;
+  }
+
+  const opts = options || {};
+  const prepend = opts.contains ? '' : '^';
+  const append = opts.contains ? '' : '$';
+
+  let source = `${prepend}(?:${parsed.output})${append}`;
+  if (parsed && parsed.negated === true) {
+    source = `^(?!${source}).*$`;
+  }
+
+  const regex = picomatch.toRegex(source, options);
+  if (returnState === true) {
+    regex.state = parsed;
+  }
+
+  return regex;
+};
+
+picomatch.makeRe = (input, options, returnOutput = false, returnState = false) => {
+  if (!input || typeof input !== 'string') {
+    throw new TypeError('Expected a non-empty string');
+  }
+
+  const opts = options || {};
+  let parsed = { negated: false, fastpaths: true };
+  let prefix = '';
+  let output;
+
+  if (input.startsWith('./')) {
+    input = input.slice(2);
+    prefix = parsed.prefix = './';
+  }
+
+  if (opts.fastpaths !== false && (input[0] === '.' || input[0] === '*')) {
+    output = parse.fastpaths(input, options);
+  }
+
+  if (output === undefined) {
+    parsed = parse(input, options);
+    parsed.prefix = prefix + (parsed.prefix || '');
+  } else {
+    parsed.output = output;
+  }
+
+  return picomatch.compileRe(parsed, options, returnOutput, returnState);
+};
+
+/**
+ * Create a regular expression from the given regex source string.
+ *
+ * ```js
+ * const picomatch = require('picomatch');
+ * // picomatch.toRegex(source[, options]);
+ *
+ * const { output } = picomatch.parse('*.js');
+ * console.log(picomatch.toRegex(output));
+ * //=> /^(?:(?!\.)(?=.)[^/]*?\.js)$/
+ * ```
+ * @param {String} `source` Regular expression source string.
+ * @param {Object} `options`
+ * @return {RegExp}
+ * @api public
+ */
+
+picomatch.toRegex = (source, options) => {
+  try {
+    const opts = options || {};
+    return new RegExp(source, opts.flags || (opts.nocase ? 'i' : ''));
+  } catch (err) {
+    if (options && options.debug === true) throw err;
+    return /$^/;
+  }
+};
+
+/**
+ * Picomatch constants.
+ * @return {Object}
+ */
+
+picomatch.constants = constants;
+
+/**
+ * Expose "picomatch"
+ */
+
+module.exports = picomatch;
+
+
+/***/ }),
 /* 2 */,
 /* 3 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -59,7 +404,7 @@ module.exports =
 "use strict";
 
 
-var chalk = __webpack_require__(330);
+var chalk = __webpack_require__(843);
 var Table = __webpack_require__(751);
 var cardinal = __webpack_require__(305);
 var emoji = __webpack_require__(86);
@@ -974,11 +1319,8 @@ module.exports = class Slugger {
     this.seen = {};
   }
 
-  /**
-   * Convert string to unique id
-   */
-  slug(value) {
-    let slug = value
+  serialize(value) {
+    return value
       .toLowerCase()
       .trim()
       // remove html tags
@@ -986,17 +1328,36 @@ module.exports = class Slugger {
       // remove unwanted chars
       .replace(/[\u2000-\u206F\u2E00-\u2E7F\\'!"#$%&()*+,./:;<=>?@[\]^`{|}~]/g, '')
       .replace(/\s/g, '-');
+  }
 
+  /**
+   * Finds the next safe (unique) slug to use
+   */
+  getNextSafeSlug(originalSlug, isDryRun) {
+    let slug = originalSlug;
+    let occurenceAccumulator = 0;
     if (this.seen.hasOwnProperty(slug)) {
-      const originalSlug = slug;
+      occurenceAccumulator = this.seen[originalSlug];
       do {
-        this.seen[originalSlug]++;
-        slug = originalSlug + '-' + this.seen[originalSlug];
+        occurenceAccumulator++;
+        slug = originalSlug + '-' + occurenceAccumulator;
       } while (this.seen.hasOwnProperty(slug));
     }
-    this.seen[slug] = 0;
-
+    if (!isDryRun) {
+      this.seen[originalSlug] = occurenceAccumulator;
+      this.seen[slug] = 0;
+    }
     return slug;
+  }
+
+  /**
+   * Convert string to unique id
+   * @param {object} options
+   * @param {boolean} options.dryrun Generates the next unique slug without updating the internal accumulator.
+   */
+  slug(value, options = {}) {
+    const slug = this.serialize(value);
+    return this.getNextSafeSlug(slug, options.dryrun);
   }
 };
 
@@ -1081,699 +1442,7 @@ module.exports = {
 
 
 /***/ }),
-/* 27 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-// A bit simpler than readable streams.
-// Implement an async ._write(chunk, encoding, cb), and it'll handle all
-// the drain event emission and buffering.
-
-
-
-/*<replacement>*/
-
-var pna = __webpack_require__(334);
-/*</replacement>*/
-
-module.exports = Writable;
-
-/* <replacement> */
-function WriteReq(chunk, encoding, cb) {
-  this.chunk = chunk;
-  this.encoding = encoding;
-  this.callback = cb;
-  this.next = null;
-}
-
-// It seems a linked list but it is not
-// there will be only 2 of these for each stream
-function CorkedRequest(state) {
-  var _this = this;
-
-  this.next = null;
-  this.entry = null;
-  this.finish = function () {
-    onCorkedFinish(_this, state);
-  };
-}
-/* </replacement> */
-
-/*<replacement>*/
-var asyncWrite = !process.browser && ['v0.10', 'v0.9.'].indexOf(process.version.slice(0, 5)) > -1 ? setImmediate : pna.nextTick;
-/*</replacement>*/
-
-/*<replacement>*/
-var Duplex;
-/*</replacement>*/
-
-Writable.WritableState = WritableState;
-
-/*<replacement>*/
-var util = Object.create(__webpack_require__(286));
-util.inherits = __webpack_require__(689);
-/*</replacement>*/
-
-/*<replacement>*/
-var internalUtil = {
-  deprecate: __webpack_require__(562)
-};
-/*</replacement>*/
-
-/*<replacement>*/
-var Stream = __webpack_require__(427);
-/*</replacement>*/
-
-/*<replacement>*/
-
-var Buffer = __webpack_require__(149).Buffer;
-var OurUint8Array = global.Uint8Array || function () {};
-function _uint8ArrayToBuffer(chunk) {
-  return Buffer.from(chunk);
-}
-function _isUint8Array(obj) {
-  return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
-}
-
-/*</replacement>*/
-
-var destroyImpl = __webpack_require__(546);
-
-util.inherits(Writable, Stream);
-
-function nop() {}
-
-function WritableState(options, stream) {
-  Duplex = Duplex || __webpack_require__(831);
-
-  options = options || {};
-
-  // Duplex streams are both readable and writable, but share
-  // the same options object.
-  // However, some cases require setting options to different
-  // values for the readable and the writable sides of the duplex stream.
-  // These options can be provided separately as readableXXX and writableXXX.
-  var isDuplex = stream instanceof Duplex;
-
-  // object stream flag to indicate whether or not this stream
-  // contains buffers or objects.
-  this.objectMode = !!options.objectMode;
-
-  if (isDuplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
-
-  // the point at which write() starts returning false
-  // Note: 0 is a valid value, means that we always return false if
-  // the entire buffer is not flushed immediately on write()
-  var hwm = options.highWaterMark;
-  var writableHwm = options.writableHighWaterMark;
-  var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-
-  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (writableHwm || writableHwm === 0)) this.highWaterMark = writableHwm;else this.highWaterMark = defaultHwm;
-
-  // cast to ints.
-  this.highWaterMark = Math.floor(this.highWaterMark);
-
-  // if _final has been called
-  this.finalCalled = false;
-
-  // drain event flag.
-  this.needDrain = false;
-  // at the start of calling end()
-  this.ending = false;
-  // when end() has been called, and returned
-  this.ended = false;
-  // when 'finish' is emitted
-  this.finished = false;
-
-  // has it been destroyed
-  this.destroyed = false;
-
-  // should we decode strings into buffers before passing to _write?
-  // this is here so that some node-core streams can optimize string
-  // handling at a lower level.
-  var noDecode = options.decodeStrings === false;
-  this.decodeStrings = !noDecode;
-
-  // Crypto is kind of old and crusty.  Historically, its default string
-  // encoding is 'binary' so we have to make this configurable.
-  // Everything else in the universe uses 'utf8', though.
-  this.defaultEncoding = options.defaultEncoding || 'utf8';
-
-  // not an actual buffer we keep track of, but a measurement
-  // of how much we're waiting to get pushed to some underlying
-  // socket or file.
-  this.length = 0;
-
-  // a flag to see when we're in the middle of a write.
-  this.writing = false;
-
-  // when true all writes will be buffered until .uncork() call
-  this.corked = 0;
-
-  // a flag to be able to tell if the onwrite cb is called immediately,
-  // or on a later tick.  We set this to true at first, because any
-  // actions that shouldn't happen until "later" should generally also
-  // not happen before the first write call.
-  this.sync = true;
-
-  // a flag to know if we're processing previously buffered items, which
-  // may call the _write() callback in the same tick, so that we don't
-  // end up in an overlapped onwrite situation.
-  this.bufferProcessing = false;
-
-  // the callback that's passed to _write(chunk,cb)
-  this.onwrite = function (er) {
-    onwrite(stream, er);
-  };
-
-  // the callback that the user supplies to write(chunk,encoding,cb)
-  this.writecb = null;
-
-  // the amount that is being written when _write is called.
-  this.writelen = 0;
-
-  this.bufferedRequest = null;
-  this.lastBufferedRequest = null;
-
-  // number of pending user-supplied write callbacks
-  // this must be 0 before 'finish' can be emitted
-  this.pendingcb = 0;
-
-  // emit prefinish if the only thing we're waiting for is _write cbs
-  // This is relevant for synchronous Transform streams
-  this.prefinished = false;
-
-  // True if the error was already emitted and should not be thrown again
-  this.errorEmitted = false;
-
-  // count buffered requests
-  this.bufferedRequestCount = 0;
-
-  // allocate the first CorkedRequest, there is always
-  // one allocated and free to use, and we maintain at most two
-  this.corkedRequestsFree = new CorkedRequest(this);
-}
-
-WritableState.prototype.getBuffer = function getBuffer() {
-  var current = this.bufferedRequest;
-  var out = [];
-  while (current) {
-    out.push(current);
-    current = current.next;
-  }
-  return out;
-};
-
-(function () {
-  try {
-    Object.defineProperty(WritableState.prototype, 'buffer', {
-      get: internalUtil.deprecate(function () {
-        return this.getBuffer();
-      }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' + 'instead.', 'DEP0003')
-    });
-  } catch (_) {}
-})();
-
-// Test _writableState for inheritance to account for Duplex streams,
-// whose prototype chain only points to Readable.
-var realHasInstance;
-if (typeof Symbol === 'function' && Symbol.hasInstance && typeof Function.prototype[Symbol.hasInstance] === 'function') {
-  realHasInstance = Function.prototype[Symbol.hasInstance];
-  Object.defineProperty(Writable, Symbol.hasInstance, {
-    value: function (object) {
-      if (realHasInstance.call(this, object)) return true;
-      if (this !== Writable) return false;
-
-      return object && object._writableState instanceof WritableState;
-    }
-  });
-} else {
-  realHasInstance = function (object) {
-    return object instanceof this;
-  };
-}
-
-function Writable(options) {
-  Duplex = Duplex || __webpack_require__(831);
-
-  // Writable ctor is applied to Duplexes, too.
-  // `realHasInstance` is necessary because using plain `instanceof`
-  // would return false, as no `_writableState` property is attached.
-
-  // Trying to use the custom `instanceof` for Writable here will also break the
-  // Node.js LazyTransform implementation, which has a non-trivial getter for
-  // `_writableState` that would lead to infinite recursion.
-  if (!realHasInstance.call(Writable, this) && !(this instanceof Duplex)) {
-    return new Writable(options);
-  }
-
-  this._writableState = new WritableState(options, this);
-
-  // legacy.
-  this.writable = true;
-
-  if (options) {
-    if (typeof options.write === 'function') this._write = options.write;
-
-    if (typeof options.writev === 'function') this._writev = options.writev;
-
-    if (typeof options.destroy === 'function') this._destroy = options.destroy;
-
-    if (typeof options.final === 'function') this._final = options.final;
-  }
-
-  Stream.call(this);
-}
-
-// Otherwise people can pipe Writable streams, which is just wrong.
-Writable.prototype.pipe = function () {
-  this.emit('error', new Error('Cannot pipe, not readable'));
-};
-
-function writeAfterEnd(stream, cb) {
-  var er = new Error('write after end');
-  // TODO: defer error events consistently everywhere, not just the cb
-  stream.emit('error', er);
-  pna.nextTick(cb, er);
-}
-
-// Checks that a user-supplied chunk is valid, especially for the particular
-// mode the stream is in. Currently this means that `null` is never accepted
-// and undefined/non-string values are only allowed in object mode.
-function validChunk(stream, state, chunk, cb) {
-  var valid = true;
-  var er = false;
-
-  if (chunk === null) {
-    er = new TypeError('May not write null values to stream');
-  } else if (typeof chunk !== 'string' && chunk !== undefined && !state.objectMode) {
-    er = new TypeError('Invalid non-string/buffer chunk');
-  }
-  if (er) {
-    stream.emit('error', er);
-    pna.nextTick(cb, er);
-    valid = false;
-  }
-  return valid;
-}
-
-Writable.prototype.write = function (chunk, encoding, cb) {
-  var state = this._writableState;
-  var ret = false;
-  var isBuf = !state.objectMode && _isUint8Array(chunk);
-
-  if (isBuf && !Buffer.isBuffer(chunk)) {
-    chunk = _uint8ArrayToBuffer(chunk);
-  }
-
-  if (typeof encoding === 'function') {
-    cb = encoding;
-    encoding = null;
-  }
-
-  if (isBuf) encoding = 'buffer';else if (!encoding) encoding = state.defaultEncoding;
-
-  if (typeof cb !== 'function') cb = nop;
-
-  if (state.ended) writeAfterEnd(this, cb);else if (isBuf || validChunk(this, state, chunk, cb)) {
-    state.pendingcb++;
-    ret = writeOrBuffer(this, state, isBuf, chunk, encoding, cb);
-  }
-
-  return ret;
-};
-
-Writable.prototype.cork = function () {
-  var state = this._writableState;
-
-  state.corked++;
-};
-
-Writable.prototype.uncork = function () {
-  var state = this._writableState;
-
-  if (state.corked) {
-    state.corked--;
-
-    if (!state.writing && !state.corked && !state.finished && !state.bufferProcessing && state.bufferedRequest) clearBuffer(this, state);
-  }
-};
-
-Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
-  // node::ParseEncoding() requires lower case.
-  if (typeof encoding === 'string') encoding = encoding.toLowerCase();
-  if (!(['hex', 'utf8', 'utf-8', 'ascii', 'binary', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le', 'raw'].indexOf((encoding + '').toLowerCase()) > -1)) throw new TypeError('Unknown encoding: ' + encoding);
-  this._writableState.defaultEncoding = encoding;
-  return this;
-};
-
-function decodeChunk(state, chunk, encoding) {
-  if (!state.objectMode && state.decodeStrings !== false && typeof chunk === 'string') {
-    chunk = Buffer.from(chunk, encoding);
-  }
-  return chunk;
-}
-
-Object.defineProperty(Writable.prototype, 'writableHighWaterMark', {
-  // making it explicit this property is not enumerable
-  // because otherwise some prototype manipulation in
-  // userland will fail
-  enumerable: false,
-  get: function () {
-    return this._writableState.highWaterMark;
-  }
-});
-
-// if we're already writing something, then just put this
-// in the queue, and wait our turn.  Otherwise, call _write
-// If we return false, then we need a drain event, so set that flag.
-function writeOrBuffer(stream, state, isBuf, chunk, encoding, cb) {
-  if (!isBuf) {
-    var newChunk = decodeChunk(state, chunk, encoding);
-    if (chunk !== newChunk) {
-      isBuf = true;
-      encoding = 'buffer';
-      chunk = newChunk;
-    }
-  }
-  var len = state.objectMode ? 1 : chunk.length;
-
-  state.length += len;
-
-  var ret = state.length < state.highWaterMark;
-  // we must ensure that previous needDrain will not be reset to false.
-  if (!ret) state.needDrain = true;
-
-  if (state.writing || state.corked) {
-    var last = state.lastBufferedRequest;
-    state.lastBufferedRequest = {
-      chunk: chunk,
-      encoding: encoding,
-      isBuf: isBuf,
-      callback: cb,
-      next: null
-    };
-    if (last) {
-      last.next = state.lastBufferedRequest;
-    } else {
-      state.bufferedRequest = state.lastBufferedRequest;
-    }
-    state.bufferedRequestCount += 1;
-  } else {
-    doWrite(stream, state, false, len, chunk, encoding, cb);
-  }
-
-  return ret;
-}
-
-function doWrite(stream, state, writev, len, chunk, encoding, cb) {
-  state.writelen = len;
-  state.writecb = cb;
-  state.writing = true;
-  state.sync = true;
-  if (writev) stream._writev(chunk, state.onwrite);else stream._write(chunk, encoding, state.onwrite);
-  state.sync = false;
-}
-
-function onwriteError(stream, state, sync, er, cb) {
-  --state.pendingcb;
-
-  if (sync) {
-    // defer the callback if we are being called synchronously
-    // to avoid piling up things on the stack
-    pna.nextTick(cb, er);
-    // this can emit finish, and it will always happen
-    // after error
-    pna.nextTick(finishMaybe, stream, state);
-    stream._writableState.errorEmitted = true;
-    stream.emit('error', er);
-  } else {
-    // the caller expect this to happen before if
-    // it is async
-    cb(er);
-    stream._writableState.errorEmitted = true;
-    stream.emit('error', er);
-    // this can emit finish, but finish must
-    // always follow error
-    finishMaybe(stream, state);
-  }
-}
-
-function onwriteStateUpdate(state) {
-  state.writing = false;
-  state.writecb = null;
-  state.length -= state.writelen;
-  state.writelen = 0;
-}
-
-function onwrite(stream, er) {
-  var state = stream._writableState;
-  var sync = state.sync;
-  var cb = state.writecb;
-
-  onwriteStateUpdate(state);
-
-  if (er) onwriteError(stream, state, sync, er, cb);else {
-    // Check if we're actually ready to finish, but don't emit yet
-    var finished = needFinish(state);
-
-    if (!finished && !state.corked && !state.bufferProcessing && state.bufferedRequest) {
-      clearBuffer(stream, state);
-    }
-
-    if (sync) {
-      /*<replacement>*/
-      asyncWrite(afterWrite, stream, state, finished, cb);
-      /*</replacement>*/
-    } else {
-      afterWrite(stream, state, finished, cb);
-    }
-  }
-}
-
-function afterWrite(stream, state, finished, cb) {
-  if (!finished) onwriteDrain(stream, state);
-  state.pendingcb--;
-  cb();
-  finishMaybe(stream, state);
-}
-
-// Must force callback to be called on nextTick, so that we don't
-// emit 'drain' before the write() consumer gets the 'false' return
-// value, and has a chance to attach a 'drain' listener.
-function onwriteDrain(stream, state) {
-  if (state.length === 0 && state.needDrain) {
-    state.needDrain = false;
-    stream.emit('drain');
-  }
-}
-
-// if there's something in the buffer waiting, then process it
-function clearBuffer(stream, state) {
-  state.bufferProcessing = true;
-  var entry = state.bufferedRequest;
-
-  if (stream._writev && entry && entry.next) {
-    // Fast case, write everything using _writev()
-    var l = state.bufferedRequestCount;
-    var buffer = new Array(l);
-    var holder = state.corkedRequestsFree;
-    holder.entry = entry;
-
-    var count = 0;
-    var allBuffers = true;
-    while (entry) {
-      buffer[count] = entry;
-      if (!entry.isBuf) allBuffers = false;
-      entry = entry.next;
-      count += 1;
-    }
-    buffer.allBuffers = allBuffers;
-
-    doWrite(stream, state, true, state.length, buffer, '', holder.finish);
-
-    // doWrite is almost always async, defer these to save a bit of time
-    // as the hot path ends with doWrite
-    state.pendingcb++;
-    state.lastBufferedRequest = null;
-    if (holder.next) {
-      state.corkedRequestsFree = holder.next;
-      holder.next = null;
-    } else {
-      state.corkedRequestsFree = new CorkedRequest(state);
-    }
-    state.bufferedRequestCount = 0;
-  } else {
-    // Slow case, write chunks one-by-one
-    while (entry) {
-      var chunk = entry.chunk;
-      var encoding = entry.encoding;
-      var cb = entry.callback;
-      var len = state.objectMode ? 1 : chunk.length;
-
-      doWrite(stream, state, false, len, chunk, encoding, cb);
-      entry = entry.next;
-      state.bufferedRequestCount--;
-      // if we didn't call the onwrite immediately, then
-      // it means that we need to wait until it does.
-      // also, that means that the chunk and cb are currently
-      // being processed, so move the buffer counter past them.
-      if (state.writing) {
-        break;
-      }
-    }
-
-    if (entry === null) state.lastBufferedRequest = null;
-  }
-
-  state.bufferedRequest = entry;
-  state.bufferProcessing = false;
-}
-
-Writable.prototype._write = function (chunk, encoding, cb) {
-  cb(new Error('_write() is not implemented'));
-};
-
-Writable.prototype._writev = null;
-
-Writable.prototype.end = function (chunk, encoding, cb) {
-  var state = this._writableState;
-
-  if (typeof chunk === 'function') {
-    cb = chunk;
-    chunk = null;
-    encoding = null;
-  } else if (typeof encoding === 'function') {
-    cb = encoding;
-    encoding = null;
-  }
-
-  if (chunk !== null && chunk !== undefined) this.write(chunk, encoding);
-
-  // .end() fully uncorks
-  if (state.corked) {
-    state.corked = 1;
-    this.uncork();
-  }
-
-  // ignore unnecessary end() calls.
-  if (!state.ending && !state.finished) endWritable(this, state, cb);
-};
-
-function needFinish(state) {
-  return state.ending && state.length === 0 && state.bufferedRequest === null && !state.finished && !state.writing;
-}
-function callFinal(stream, state) {
-  stream._final(function (err) {
-    state.pendingcb--;
-    if (err) {
-      stream.emit('error', err);
-    }
-    state.prefinished = true;
-    stream.emit('prefinish');
-    finishMaybe(stream, state);
-  });
-}
-function prefinish(stream, state) {
-  if (!state.prefinished && !state.finalCalled) {
-    if (typeof stream._final === 'function') {
-      state.pendingcb++;
-      state.finalCalled = true;
-      pna.nextTick(callFinal, stream, state);
-    } else {
-      state.prefinished = true;
-      stream.emit('prefinish');
-    }
-  }
-}
-
-function finishMaybe(stream, state) {
-  var need = needFinish(state);
-  if (need) {
-    prefinish(stream, state);
-    if (state.pendingcb === 0) {
-      state.finished = true;
-      stream.emit('finish');
-    }
-  }
-  return need;
-}
-
-function endWritable(stream, state, cb) {
-  state.ending = true;
-  finishMaybe(stream, state);
-  if (cb) {
-    if (state.finished) pna.nextTick(cb);else stream.once('finish', cb);
-  }
-  state.ended = true;
-  stream.writable = false;
-}
-
-function onCorkedFinish(corkReq, state, err) {
-  var entry = corkReq.entry;
-  corkReq.entry = null;
-  while (entry) {
-    var cb = entry.callback;
-    state.pendingcb--;
-    cb(err);
-    entry = entry.next;
-  }
-  if (state.corkedRequestsFree) {
-    state.corkedRequestsFree.next = corkReq;
-  } else {
-    state.corkedRequestsFree = corkReq;
-  }
-}
-
-Object.defineProperty(Writable.prototype, 'destroyed', {
-  get: function () {
-    if (this._writableState === undefined) {
-      return false;
-    }
-    return this._writableState.destroyed;
-  },
-  set: function (value) {
-    // we ignore the value if the stream
-    // has not been initialized yet
-    if (!this._writableState) {
-      return;
-    }
-
-    // backward compatibility, the user is explicitly
-    // managing destroyed
-    this._writableState.destroyed = value;
-  }
-});
-
-Writable.prototype.destroy = destroyImpl.destroy;
-Writable.prototype._undestroy = destroyImpl.undestroy;
-Writable.prototype._destroy = function (err, cb) {
-  this.end();
-  cb(err);
-};
-
-/***/ }),
+/* 27 */,
 /* 28 */,
 /* 29 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -1826,7 +1495,7 @@ module.exports = ({branch, nextRelease: {type, channel}, lastRelease, logger}) =
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 const {Signale} = __webpack_require__(110);
-const figures = __webpack_require__(848);
+const figures = __webpack_require__(517);
 
 module.exports = ({stdout, stderr}) =>
   new Signale({
@@ -2293,7 +1962,27 @@ module.exports = ["389-exception","Autoconf-exception-2.0","Autoconf-exception-3
 /***/ }),
 /* 53 */,
 /* 54 */,
-/* 55 */,
+/* 55 */
+/***/ (function(module) {
+
+"use strict";
+
+module.exports = x => {
+	if (typeof x !== 'string') {
+		throw new TypeError('Expected a string, got ' + typeof x);
+	}
+
+	// Catches EFBBBF (UTF-8 BOM) because the buffer-to-string
+	// conversion translates it to FEFF (UTF-16 BOM)
+	if (x.charCodeAt(0) === 0xFEFF) {
+		return x.slice(1);
+	}
+
+	return x;
+};
+
+
+/***/ }),
 /* 56 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -2315,79 +2004,27 @@ module.exports = (function () {
 /***/ }),
 /* 57 */,
 /* 58 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(module) {
+
+module.exports = require("readline");
+
+/***/ }),
+/* 59 */,
+/* 60 */
+/***/ (function(module) {
 
 "use strict";
 
-const path = __webpack_require__(622);
-const fs = __webpack_require__(747);
-const {promisify} = __webpack_require__(669);
-const pLocate = __webpack_require__(241);
-
-const fsStat = promisify(fs.stat);
-const fsLStat = promisify(fs.lstat);
-
-const typeMappings = {
-	directory: 'isDirectory',
-	file: 'isFile'
-};
-
-function checkType({type}) {
-	if (type in typeMappings) {
-		return;
-	}
-
-	throw new Error(`Invalid type specified: ${type}`);
-}
-
-const matchType = (type, stat) => type === undefined || stat[typeMappings[type]]();
-
-module.exports = async (paths, options) => {
-	options = {
-		cwd: process.cwd(),
-		type: 'file',
-		allowSymlinks: true,
-		...options
-	};
-	checkType(options);
-	const statFn = options.allowSymlinks ? fsStat : fsLStat;
-
-	return pLocate(paths, async path_ => {
-		try {
-			const stat = await statFn(path.resolve(options.cwd, path_));
-			return matchType(options.type, stat);
-		} catch (_) {
-			return false;
-		}
-	}, options);
-};
-
-module.exports.sync = (paths, options) => {
-	options = {
-		cwd: process.cwd(),
-		allowSymlinks: true,
-		type: 'file',
-		...options
-	};
-	checkType(options);
-	const statFn = options.allowSymlinks ? fs.statSync : fs.lstatSync;
-
-	for (const path_ of paths) {
-		try {
-			const stat = statFn(path.resolve(options.cwd, path_));
-
-			if (matchType(options.type, stat)) {
-				return path_;
-			}
-		} catch (_) {
-		}
-	}
+module.exports = (flag, argv) => {
+	argv = argv || process.argv;
+	const prefix = flag.startsWith('-') ? '' : (flag.length === 1 ? '-' : '--');
+	const pos = argv.indexOf(prefix + flag);
+	const terminatorPos = argv.indexOf('--');
+	return pos !== -1 && (terminatorPos === -1 ? true : pos < terminatorPos);
 };
 
 
 /***/ }),
-/* 59 */,
-/* 60 */,
 /* 61 */,
 /* 62 */,
 /* 63 */
@@ -4046,11 +3683,17 @@ class ParseContext {
 
     while (ch === PlainValue.Char.ANCHOR || ch === PlainValue.Char.COMMENT || ch === PlainValue.Char.TAG || ch === '\n') {
       if (ch === '\n') {
-        const lineStart = offset + 1;
-        const inEnd = PlainValue.Node.endOfIndent(src, lineStart);
+        let inEnd = offset;
+        let lineStart;
+
+        do {
+          lineStart = inEnd + 1;
+          inEnd = PlainValue.Node.endOfIndent(src, lineStart);
+        } while (src[inEnd] === '\n');
+
         const indentDiff = inEnd - (lineStart + this.indent);
         const noIndicatorAsIndent = parent.type === PlainValue.Type.SEQ_ITEM && parent.context.atLineStart;
-        if (!PlainValue.Node.nextNodeIsIndented(src[inEnd], indentDiff, !noIndicatorAsIndent)) break;
+        if (src[inEnd] !== '#' && !PlainValue.Node.nextNodeIsIndented(src[inEnd], indentDiff, !noIndicatorAsIndent)) break;
         this.atLineStart = true;
         this.lineStart = lineStart;
         lineHasProps = false;
@@ -4152,15 +3795,12 @@ const debug = __webpack_require__(548)
 const { MAX_LENGTH, MAX_SAFE_INTEGER } = __webpack_require__(181)
 const { re, t } = __webpack_require__(976)
 
+const parseOptions = __webpack_require__(143)
 const { compareIdentifiers } = __webpack_require__(760)
 class SemVer {
   constructor (version, options) {
-    if (!options || typeof options !== 'object') {
-      options = {
-        loose: !!options,
-        includePrerelease: false
-      }
-    }
+    options = parseOptions(options)
+
     if (version instanceof SemVer) {
       if (version.loose === !!options.loose &&
           version.includePrerelease === !!options.includePrerelease) {
@@ -11159,9 +10799,14 @@ return /******/ (function(modules) { // webpackBootstrap
 
 "use strict";
 
-module.exports = cb => new Promise(resolve => {
-	resolve(cb());
+
+const pTry = (fn, ...arguments_) => new Promise(resolve => {
+	resolve(fn(...arguments_));
 });
+
+module.exports = pTry;
+// TODO: remove this in the next major version
+module.exports.default = pTry;
 
 
 /***/ }),
@@ -11209,7 +10854,7 @@ const util = __webpack_require__(669);
 const braces = __webpack_require__(759);
 const picomatch = __webpack_require__(827);
 const utils = __webpack_require__(224);
-const isEmptyString = val => typeof val === 'string' && (val === '' || val === './');
+const isEmptyString = val => val === '' || val === './';
 
 /**
  * Returns an array of strings that match one or more glob patterns.
@@ -11221,9 +10866,9 @@ const isEmptyString = val => typeof val === 'string' && (val === '' || val === '
  * console.log(mm(['a.js', 'a.txt'], ['*.js']));
  * //=> [ 'a.js' ]
  * ```
- * @param {String|Array<string>} list List of strings to match.
- * @param {String|Array<string>} patterns One or more glob patterns to use for matching.
- * @param {Object} options See available [options](#options)
+ * @param {String|Array<string>} `list` List of strings to match.
+ * @param {String|Array<string>} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `options` See available [options](#options)
  * @return {Array} Returns an array of matches
  * @summary false
  * @api public
@@ -11318,9 +10963,9 @@ micromatch.matcher = (pattern, options) => picomatch(pattern, options);
  * console.log(mm.isMatch('a.a', ['b.*', '*.a'])); //=> true
  * console.log(mm.isMatch('a.a', 'b.*')); //=> false
  * ```
- * @param {String} str The string to test.
- * @param {String|Array} patterns One or more glob patterns to use for matching.
- * @param {Object} [options] See available [options](#options).
+ * @param {String} `str` The string to test.
+ * @param {String|Array} `patterns` One or more glob patterns to use for matching.
+ * @param {Object} `[options]` See available [options](#options).
  * @return {Boolean} Returns true if any patterns match `str`
  * @api public
  */
@@ -11386,7 +11031,7 @@ micromatch.not = (list, patterns, options = {}) => {
  * @param {String} `str` The string to match.
  * @param {String|Array} `patterns` Glob pattern to use for matching.
  * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if the patter matches any part of `str`.
+ * @return {Boolean} Returns true if any of the patterns matches any part of `str`.
  * @api public
  */
 
@@ -11457,7 +11102,7 @@ micromatch.matchKeys = (obj, patterns, options) => {
  * @param {String|Array} `list` The string or array of strings to test. Returns as soon as the first match is found.
  * @param {String|Array} `patterns` One or more glob patterns to use for matching.
  * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if any patterns match `str`
+ * @return {Boolean} Returns true if any `patterns` matches any of the strings in `list`
  * @api public
  */
 
@@ -11493,7 +11138,7 @@ micromatch.some = (list, patterns, options) => {
  * @param {String|Array} `list` The string or array of strings to test.
  * @param {String|Array} `patterns` One or more glob patterns to use for matching.
  * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns true if any patterns match `str`
+ * @return {Boolean} Returns true if all `patterns` matches all of the strings in `list`
  * @api public
  */
 
@@ -11559,7 +11204,7 @@ micromatch.all = (str, patterns, options) => {
  * @param {String} `glob` Glob pattern to use for matching.
  * @param {String} `input` String to match
  * @param {Object} `options` See available [options](#options) for changing how matches are performed
- * @return {Boolean} Returns an array of captures if the input matches the glob pattern, otherwise `null`.
+ * @return {Array|null} Returns an array of captures if the input matches the glob pattern, otherwise `null`.
  * @api public
  */
 
@@ -11683,13 +11328,9 @@ const {MAX_LENGTH} = __webpack_require__(181)
 const { re, t } = __webpack_require__(976)
 const SemVer = __webpack_require__(65)
 
+const parseOptions = __webpack_require__(143)
 const parse = (version, options) => {
-  if (!options || typeof options !== 'object') {
-    options = {
-      loose: !!options,
-      includePrerelease: false
-    }
-  }
+  options = parseOptions(options)
 
   if (version instanceof SemVer) {
     return version
@@ -11722,66 +11363,68 @@ module.exports = parse
 /* 79 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-const {uniqBy, intersection} = __webpack_require__(557);
-const semver = __webpack_require__(876);
-const semverDiff = __webpack_require__(104);
-const getLastRelease = __webpack_require__(913);
-const {makeTag, getLowerBound} = __webpack_require__(946);
+"use strict";
 
-/**
- * Find releases that have been merged from from a higher branch but not added on the channel of the current branch.
- *
- * @param {Object} context semantic-release context.
- *
- * @return {Array<Object>} Last release and next release to be added on the channel of the current branch.
- */
-module.exports = (context) => {
-  const {
-    branch,
-    branches,
-    options: {tagFormat},
-  } = context;
+const {constants: BufferConstants} = __webpack_require__(293);
+const stream = __webpack_require__(794);
+const {promisify} = __webpack_require__(669);
+const bufferStream = __webpack_require__(625);
 
-  const higherChannels = branches
-    // Consider only releases of higher branches
-    .slice(branches.findIndex(({name}) => name === branch.name) + 1)
-    // Exclude prerelease branches
-    .filter(({type}) => type !== 'prerelease')
-    .map(({channel}) => channel || null);
+const streamPipelinePromisified = promisify(stream.pipeline);
 
-  const versiontoAdd = uniqBy(
-    branch.tags.filter(
-      ({channels, version}) =>
-        !channels.includes(branch.channel || null) &&
-        intersection(channels, higherChannels).length > 0 &&
-        (branch.type !== 'maintenance' || semver.gte(version, getLowerBound(branch.mergeRange)))
-    ),
-    'version'
-  ).sort((a, b) => semver.compare(b.version, a.version))[0];
+class MaxBufferError extends Error {
+	constructor() {
+		super('maxBuffer exceeded');
+		this.name = 'MaxBufferError';
+	}
+}
 
-  if (versiontoAdd) {
-    const {version, gitTag, channels} = versiontoAdd;
-    const lastRelease = getLastRelease(context, {before: version});
-    if (semver.gt(getLastRelease(context).version, version)) {
-      return;
-    }
+async function getStream(inputStream, options) {
+	if (!inputStream) {
+		throw new Error('Expected a stream');
+	}
 
-    const type = lastRelease.version ? semverDiff(lastRelease.version, version) : 'major';
-    const name = makeTag(tagFormat, version);
-    return {
-      lastRelease,
-      currentRelease: {type, version, channels, gitTag, name, gitHead: gitTag},
-      nextRelease: {
-        type,
-        version,
-        channel: branch.channel || null,
-        gitTag: makeTag(tagFormat, version),
-        name,
-        gitHead: gitTag,
-      },
-    };
-  }
-};
+	options = {
+		maxBuffer: Infinity,
+		...options
+	};
+
+	const {maxBuffer} = options;
+	const stream = bufferStream(options);
+
+	await new Promise((resolve, reject) => {
+		const rejectPromise = error => {
+			// Don't retrieve an oversized buffer.
+			if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
+				error.bufferedData = stream.getBufferedValue();
+			}
+
+			reject(error);
+		};
+
+		(async () => {
+			try {
+				await streamPipelinePromisified(inputStream, stream);
+				resolve();
+			} catch (error) {
+				rejectPromise(error);
+			}
+		})();
+
+		stream.on('data', () => {
+			if (stream.getBufferedLength() > maxBuffer) {
+				rejectPromise(new MaxBufferError());
+			}
+		});
+	});
+
+	return stream.getBufferedValue();
+}
+
+module.exports = getStream;
+module.exports.buffer = (stream, options) => getStream(stream, {...options, encoding: 'buffer'});
+module.exports.array = (stream, options) => getStream(stream, {...options, array: true});
+module.exports.MaxBufferError = MaxBufferError;
 
 
 /***/ }),
@@ -11850,6 +11493,10 @@ exports.formatArgs = formatArgs;
 exports.save = save;
 exports.load = load;
 exports.useColors = useColors;
+exports.destroy = util.deprecate(
+	() => {},
+	'Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.'
+);
 
 /**
  * Colors.
@@ -12079,7 +11726,9 @@ const {formatters} = module.exports;
 formatters.o = function (v) {
 	this.inspectOpts.colors = this.useColors;
 	return util.inspect(v, this.inspectOpts)
-		.replace(/\s*\n\s*/g, ' ');
+		.split('\n')
+		.map(str => str.trim())
+		.join(' ');
 };
 
 /**
@@ -12093,7 +11742,31 @@ formatters.O = function (v) {
 
 
 /***/ }),
-/* 82 */,
+/* 82 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+// We use any as a valid input type
+/* eslint-disable @typescript-eslint/no-explicit-any */
+Object.defineProperty(exports, "__esModule", { value: true });
+/**
+ * Sanitizes an input into a string so it can be passed into issueCommand safely
+ * @param input input to sanitize into a string
+ */
+function toCommandValue(input) {
+    if (input === null || input === undefined) {
+        return '';
+    }
+    else if (typeof input === 'string' || input instanceof String) {
+        return input;
+    }
+    return JSON.stringify(input);
+}
+exports.toCommandValue = toCommandValue;
+//# sourceMappingURL=utils.js.map
+
+/***/ }),
 /* 83 */,
 /* 84 */
 /***/ (function(__unusedmodule, exports) {
@@ -12282,7 +11955,40 @@ function legacy (fs) {
 
 /***/ }),
 /* 94 */,
-/* 95 */,
+/* 95 */
+/***/ (function(module) {
+
+// https://docs.gitlab.com/ce/ci/variables/README.html
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.GITLAB_CI);
+	},
+	configuration({env}) {
+		const pr = env.CI_MERGE_REQUEST_ID;
+		const isPr = Boolean(pr);
+
+		return {
+			name: 'GitLab CI/CD',
+			service: 'gitlab',
+			commit: env.CI_COMMIT_SHA,
+			tag: env.CI_COMMIT_TAG,
+			build: env.CI_PIPELINE_ID,
+			buildUrl: `${env.CI_PROJECT_URL}/pipelines/${env.CI_PIPELINE_ID}`,
+			job: env.CI_JOB_ID,
+			jobUrl: `${env.CI_PROJECT_URL}/-/jobs/${env.CI_JOB_ID}`,
+			branch: isPr ? env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME : env.CI_COMMIT_REF_NAME,
+			pr,
+			isPr,
+			prBranch: env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME,
+			slug: env.CI_PROJECT_PATH,
+			root: env.CI_PROJECT_DIR,
+		};
+	},
+};
+
+
+/***/ }),
 /* 96 */
 /***/ (function(module) {
 
@@ -12339,7 +12045,41 @@ module.exports = function runTheTrap (text, options) {
 /* 99 */,
 /* 100 */,
 /* 101 */,
-/* 102 */,
+/* 102 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+// For internal use, subject to change.
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+    result["default"] = mod;
+    return result;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+// We use any as a valid input type
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const fs = __importStar(__webpack_require__(747));
+const os = __importStar(__webpack_require__(87));
+const utils_1 = __webpack_require__(82);
+function issueCommand(command, message) {
+    const filePath = process.env[`GITHUB_${command}`];
+    if (!filePath) {
+        throw new Error(`Unable to find environment variable for file command ${command}`);
+    }
+    if (!fs.existsSync(filePath)) {
+        throw new Error(`Missing file at path: ${filePath}`);
+    }
+    fs.appendFileSync(filePath, `${utils_1.toCommandValue(message)}${os.EOL}`, {
+        encoding: 'utf8'
+    });
+}
+exports.issueCommand = issueCommand;
+//# sourceMappingURL=file-command.js.map
+
+/***/ }),
 /* 103 */,
 /* 104 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -12485,12 +12225,7 @@ module.exports = sort
 // hoisted class for cyclic dependency
 class Range {
   constructor (range, options) {
-    if (!options || typeof options !== 'object') {
-      options = {
-        loose: !!options,
-        includePrerelease: false
-      }
-    }
+    options = parseOptions(options)
 
     if (range instanceof Range) {
       if (
@@ -12530,6 +12265,24 @@ class Range {
       throw new TypeError(`Invalid SemVer Range: ${range}`)
     }
 
+    // if we have any that are not the null set, throw out null sets.
+    if (this.set.length > 1) {
+      // keep the first one, in case they're all null sets
+      const first = this.set[0]
+      this.set = this.set.filter(c => !isNullSet(c[0]))
+      if (this.set.length === 0)
+        this.set = [first]
+      else if (this.set.length > 1) {
+        // if we have any that are *, then the range is just *
+        for (const c of this.set) {
+          if (c.length === 1 && isAny(c[0])) {
+            this.set = [c]
+            break
+          }
+        }
+      }
+    }
+
     this.format()
   }
 
@@ -12548,8 +12301,17 @@ class Range {
   }
 
   parseRange (range) {
-    const loose = this.options.loose
     range = range.trim()
+
+    // memoize range parsing for performance.
+    // this is a very hot path, and fully deterministic.
+    const memoOpts = Object.keys(this.options).join(',')
+    const memoKey = `parseRange:${memoOpts}:${range}`
+    const cached = cache.get(memoKey)
+    if (cached)
+      return cached
+
+    const loose = this.options.loose
     // `1.2.3 - 1.2.4` => `>=1.2.3 <=1.2.4`
     const hr = loose ? re[t.HYPHENRANGELOOSE] : re[t.HYPHENRANGE]
     range = range.replace(hr, hyphenReplace(this.options.includePrerelease))
@@ -12571,15 +12333,33 @@ class Range {
     // ready to be split into comparators.
 
     const compRe = loose ? re[t.COMPARATORLOOSE] : re[t.COMPARATOR]
-    return range
+    const rangeList = range
       .split(' ')
       .map(comp => parseComparator(comp, this.options))
       .join(' ')
       .split(/\s+/)
+      // >=0.0.0 is equivalent to *
       .map(comp => replaceGTE0(comp, this.options))
       // in loose mode, throw out any that are not valid comparators
       .filter(this.options.loose ? comp => !!comp.match(compRe) : () => true)
       .map(comp => new Comparator(comp, this.options))
+
+    // if any comparators are the null set, then replace with JUST null set
+    // if more than one comparator, remove any * comparators
+    // also, don't include the same comparator more than once
+    const l = rangeList.length
+    const rangeMap = new Map()
+    for (const comp of rangeList) {
+      if (isNullSet(comp))
+        return [comp]
+      rangeMap.set(comp.value, comp)
+    }
+    if (rangeMap.size > 1 && rangeMap.has(''))
+      rangeMap.delete('')
+
+    const result = [...rangeMap.values()]
+    cache.set(memoKey, result)
+    return result
   }
 
   intersects (range, options) {
@@ -12628,6 +12408,10 @@ class Range {
 }
 module.exports = Range
 
+const LRU = __webpack_require__(855)
+const cache = new LRU({ max: 1000 })
+
+const parseOptions = __webpack_require__(143)
 const Comparator = __webpack_require__(174)
 const debug = __webpack_require__(548)
 const SemVer = __webpack_require__(65)
@@ -12638,6 +12422,9 @@ const {
   tildeTrimReplace,
   caretTrimReplace
 } = __webpack_require__(976)
+
+const isNullSet = c => c.value === '<0.0.0-0'
+const isAny = c => c.value === ''
 
 // take a set of comparators and determine whether there
 // exists a version which can satisfy it
@@ -13013,7 +12800,7 @@ module.exports = require("child_process");
 "use strict";
 
 const os = __webpack_require__(87);
-const hasFlag = __webpack_require__(518);
+const hasFlag = __webpack_require__(60);
 
 const env = process.env;
 
@@ -13174,84 +12961,159 @@ module.exports = function (str) {
 
 "use strict";
 
+const maybeJoin = (...args) => args.every(arg => arg) ? args.join('') : ''
+const maybeEncode = (arg) => arg ? encodeURIComponent(arg) : ''
 
-var gitHosts = module.exports = {
-  github: {
-    // First two are insecure and generally shouldn't be used any more, but
-    // they are still supported.
-    'protocols': [ 'git', 'http', 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'github.com',
-    'treepath': 'tree',
-    'filetemplate': 'https://{auth@}raw.githubusercontent.com/{user}/{project}/{committish}/{path}',
-    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
-    'gittemplate': 'git://{auth@}{domain}/{user}/{project}.git{#committish}',
-    'tarballtemplate': 'https://codeload.{domain}/{user}/{project}/tar.gz/{committish}'
-  },
-  bitbucket: {
-    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'bitbucket.org',
-    'treepath': 'src',
-    'tarballtemplate': 'https://{domain}/{user}/{project}/get/{committish}.tar.gz'
-  },
-  gitlab: {
-    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'gitlab.com',
-    'treepath': 'tree',
-    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
-    'httpstemplate': 'git+https://{auth@}{domain}/{user}/{projectPath}.git{#committish}',
-    'tarballtemplate': 'https://{domain}/{user}/{project}/repository/archive.tar.gz?ref={committish}',
-    'pathmatch': /^[/]([^/]+)[/]((?!.*(\/-\/|\/repository\/archive\.tar\.gz\?=.*|\/repository\/[^/]+\/archive.tar.gz$)).*?)(?:[.]git|[/])?$/
-  },
-  gist: {
-    'protocols': [ 'git', 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'gist.github.com',
-    'pathmatch': /^[/](?:([^/]+)[/])?([a-z0-9]{32,})(?:[.]git)?$/,
-    'filetemplate': 'https://gist.githubusercontent.com/{user}/{project}/raw{/committish}/{path}',
-    'bugstemplate': 'https://{domain}/{project}',
-    'gittemplate': 'git://{domain}/{project}.git{#committish}',
-    'sshtemplate': 'git@{domain}:/{project}.git{#committish}',
-    'sshurltemplate': 'git+ssh://git@{domain}/{project}.git{#committish}',
-    'browsetemplate': 'https://{domain}/{project}{/committish}',
-    'browsefiletemplate': 'https://{domain}/{project}{/committish}{#path}',
-    'docstemplate': 'https://{domain}/{project}{/committish}',
-    'httpstemplate': 'git+https://{domain}/{project}.git{#committish}',
-    'shortcuttemplate': '{type}:{project}{#committish}',
-    'pathtemplate': '{project}{#committish}',
-    'tarballtemplate': 'https://codeload.github.com/gist/{project}/tar.gz/{committish}',
-    'hashformat': function (fragment) {
-      return 'file-' + formatHashFragment(fragment)
+const defaults = {
+  sshtemplate: ({ domain, user, project, committish }) => `git@${domain}:${user}/${project}.git${maybeJoin('#', committish)}`,
+  sshurltemplate: ({ domain, user, project, committish }) => `git+ssh://git@${domain}/${user}/${project}.git${maybeJoin('#', committish)}`,
+  browsetemplate: ({ domain, user, project, committish, treepath }) => `https://${domain}/${user}/${project}${maybeJoin('/', treepath, '/', maybeEncode(committish))}`,
+  browsefiletemplate: ({ domain, user, project, committish, treepath, path, fragment, hashformat }) => `https://${domain}/${user}/${project}/${treepath}/${maybeEncode(committish || 'master')}/${path}${maybeJoin('#', hashformat(fragment || ''))}`,
+  docstemplate: ({ domain, user, project, treepath, committish }) => `https://${domain}/${user}/${project}${maybeJoin('/', treepath, '/', maybeEncode(committish))}#readme`,
+  httpstemplate: ({ auth, domain, user, project, committish }) => `git+https://${maybeJoin(auth, '@')}${domain}/${user}/${project}.git${maybeJoin('#', committish)}`,
+  filetemplate: ({ domain, user, project, committish, path }) => `https://${domain}/${user}/${project}/raw/${maybeEncode(committish) || 'master'}/${path}`,
+  shortcuttemplate: ({ type, user, project, committish }) => `${type}:${user}/${project}${maybeJoin('#', committish)}`,
+  pathtemplate: ({ user, project, committish }) => `${user}/${project}${maybeJoin('#', committish)}`,
+  bugstemplate: ({ domain, user, project }) => `https://${domain}/${user}/${project}/issues`,
+  hashformat: formatHashFragment
+}
+
+const gitHosts = {}
+gitHosts.github = Object.assign({}, defaults, {
+  // First two are insecure and generally shouldn't be used any more, but
+  // they are still supported.
+  protocols: ['git:', 'http:', 'git+ssh:', 'git+https:', 'ssh:', 'https:'],
+  domain: 'github.com',
+  treepath: 'tree',
+  filetemplate: ({ auth, user, project, committish, path }) => `https://${maybeJoin(auth, '@')}raw.githubusercontent.com/${user}/${project}/${maybeEncode(committish) || 'master'}/${path}`,
+  gittemplate: ({ auth, domain, user, project, committish }) => `git://${maybeJoin(auth, '@')}${domain}/${user}/${project}.git${maybeJoin('#', committish)}`,
+  tarballtemplate: ({ domain, user, project, committish }) => `https://codeload.${domain}/${user}/${project}/tar.gz/${maybeEncode(committish) || 'master'}`,
+  extract: (url) => {
+    let [, user, project, type, committish] = url.pathname.split('/', 5)
+    if (type && type !== 'tree') {
+      return
     }
+
+    if (!type) {
+      committish = url.hash.slice(1)
+    }
+
+    if (project && project.endsWith('.git')) {
+      project = project.slice(0, -4)
+    }
+
+    if (!user || !project) {
+      return
+    }
+
+    return { user, project, committish }
   }
-}
-
-var gitHostDefaults = {
-  'sshtemplate': 'git@{domain}:{user}/{project}.git{#committish}',
-  'sshurltemplate': 'git+ssh://git@{domain}/{user}/{project}.git{#committish}',
-  'browsetemplate': 'https://{domain}/{user}/{project}{/tree/committish}',
-  'browsefiletemplate': 'https://{domain}/{user}/{project}/{treepath}/{committish}/{path}{#fragment}',
-  'docstemplate': 'https://{domain}/{user}/{project}{/tree/committish}#readme',
-  'httpstemplate': 'git+https://{auth@}{domain}/{user}/{project}.git{#committish}',
-  'filetemplate': 'https://{domain}/{user}/{project}/raw/{committish}/{path}',
-  'shortcuttemplate': '{type}:{user}/{project}{#committish}',
-  'pathtemplate': '{user}/{project}{#committish}',
-  'pathmatch': /^[/]([^/]+)[/]([^/]+?)(?:[.]git|[/])?$/,
-  'hashformat': formatHashFragment
-}
-
-Object.keys(gitHosts).forEach(function (name) {
-  Object.keys(gitHostDefaults).forEach(function (key) {
-    if (gitHosts[name][key]) return
-    gitHosts[name][key] = gitHostDefaults[key]
-  })
-  gitHosts[name].protocols_re = RegExp('^(' +
-    gitHosts[name].protocols.map(function (protocol) {
-      return protocol.replace(/([\\+*{}()[\]$^|])/g, '\\$1')
-    }).join('|') + '):$')
 })
+
+gitHosts.bitbucket = Object.assign({}, defaults, {
+  protocols: ['git+ssh:', 'git+https:', 'ssh:', 'https:'],
+  domain: 'bitbucket.org',
+  treepath: 'src',
+  tarballtemplate: ({ domain, user, project, committish }) => `https://${domain}/${user}/${project}/get/${maybeEncode(committish) || 'master'}.tar.gz`,
+  extract: (url) => {
+    let [, user, project, aux] = url.pathname.split('/', 4)
+    if (['get'].includes(aux)) {
+      return
+    }
+
+    if (project && project.endsWith('.git')) {
+      project = project.slice(0, -4)
+    }
+
+    if (!user || !project) {
+      return
+    }
+
+    return { user, project, committish: url.hash.slice(1) }
+  }
+})
+
+gitHosts.gitlab = Object.assign({}, defaults, {
+  protocols: ['git+ssh:', 'git+https:', 'ssh:', 'https:'],
+  domain: 'gitlab.com',
+  treepath: 'tree',
+  httpstemplate: ({ auth, domain, user, project, committish }) => `git+https://${maybeJoin(auth, '@')}${domain}/${user}/${project}.git${maybeJoin('#', committish)}`,
+  tarballtemplate: ({ domain, user, project, committish }) => `https://${domain}/${user}/${project}/repository/archive.tar.gz?ref=${maybeEncode(committish) || 'master'}`,
+  extract: (url) => {
+    const path = url.pathname.slice(1)
+    if (path.includes('/-/') || path.includes('/archive.tar.gz')) {
+      return
+    }
+
+    const segments = path.split('/')
+    let project = segments.pop()
+    if (project.endsWith('.git')) {
+      project = project.slice(0, -4)
+    }
+
+    const user = segments.join('/')
+    if (!user || !project) {
+      return
+    }
+
+    return { user, project, committish: url.hash.slice(1) }
+  }
+})
+
+gitHosts.gist = Object.assign({}, defaults, {
+  protocols: ['git:', 'git+ssh:', 'git+https:', 'ssh:', 'https:'],
+  domain: 'gist.github.com',
+  sshtemplate: ({ domain, project, committish }) => `git@${domain}:${project}.git${maybeJoin('#', committish)}`,
+  sshurltemplate: ({ domain, project, committish }) => `git+ssh://git@${domain}/${project}.git${maybeJoin('#', committish)}`,
+  browsetemplate: ({ domain, project, committish }) => `https://${domain}/${project}${maybeJoin('/', maybeEncode(committish))}`,
+  browsefiletemplate: ({ domain, project, committish, path, hashformat }) => `https://${domain}/${project}${maybeJoin('/', maybeEncode(committish))}${maybeJoin('#', hashformat(path))}`,
+  docstemplate: ({ domain, project, committish }) => `https://${domain}/${project}${maybeJoin('/', maybeEncode(committish))}`,
+  httpstemplate: ({ domain, project, committish }) => `git+https://${domain}/${project}.git${maybeJoin('#', committish)}`,
+  filetemplate: ({ user, project, committish, path }) => `https://gist.githubusercontent.com/${user}/${project}/raw${maybeJoin('/', maybeEncode(committish))}/${path}`,
+  shortcuttemplate: ({ type, project, committish }) => `${type}:${project}${maybeJoin('#', committish)}`,
+  pathtemplate: ({ project, committish }) => `${project}${maybeJoin('#', committish)}`,
+  bugstemplate: ({ domain, project }) => `https://${domain}/${project}`,
+  gittemplate: ({ domain, project, committish }) => `git://${domain}/${project}.git${maybeJoin('#', committish)}`,
+  tarballtemplate: ({ project, committish }) => `https://codeload.github.com/gist/${project}/tar.gz/${maybeEncode(committish) || 'master'}`,
+  extract: (url) => {
+    let [, user, project, aux] = url.pathname.split('/', 4)
+    if (aux === 'raw') {
+      return
+    }
+
+    if (!project) {
+      if (!user) {
+        return
+      }
+
+      project = user
+      user = null
+    }
+
+    if (project.endsWith('.git')) {
+      project = project.slice(0, -4)
+    }
+
+    return { user, project, committish: url.hash.slice(1) }
+  },
+  hashformat: function (fragment) {
+    return fragment && 'file-' + formatHashFragment(fragment)
+  }
+})
+
+const names = Object.keys(gitHosts)
+gitHosts.byShortcut = {}
+gitHosts.byDomain = {}
+for (const name of names) {
+  gitHosts.byShortcut[`${name}:`] = name
+  gitHosts.byDomain[gitHosts[name].domain] = name
+}
 
 function formatHashFragment (fragment) {
   return fragment.toLowerCase().replace(/^\W+|\/|\W+$/g, '').replace(/\W+/g, '-')
 }
+
+module.exports = gitHosts
 
 
 /***/ }),
@@ -13528,13 +13390,30 @@ exports.debug = debug; // for test
 
 /***/ }),
 /* 142 */,
-/* 143 */,
+/* 143 */
+/***/ (function(module) {
+
+// parse out just the options we care about so we always get a consistent
+// obj with keys in a consistent order.
+const opts = ['includePrerelease', 'loose', 'rtl']
+const parseOptions = options =>
+  !options ? {}
+  : typeof options !== 'object' ? { loose: true }
+  : opts.filter(k => options[k]).reduce((options, k) => {
+    options[k] = true
+    return options
+  }, {})
+module.exports = parseOptions
+
+
+/***/ }),
 /* 144 */,
 /* 145 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
+const {constants: BufferConstants} = __webpack_require__(293);
 const pump = __webpack_require__(453);
 const bufferStream = __webpack_require__(966);
 
@@ -13560,7 +13439,8 @@ async function getStream(inputStream, options) {
 	let stream;
 	await new Promise((resolve, reject) => {
 		const rejectPromise = error => {
-			if (error) { // A null check
+			// Don't retrieve an oversized buffer.
+			if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
 				error.bufferedData = stream.getBufferedValue();
 			}
 
@@ -13604,6 +13484,49 @@ const {parse, format} = __webpack_require__(835); // eslint-disable-line node/no
 const {isNil} = __webpack_require__(557);
 const hostedGitInfo = __webpack_require__(865);
 const {verifyAuth} = __webpack_require__(350);
+const debug = __webpack_require__(207)('semantic-release:get-git-auth-url');
+
+/**
+ * Machinery to format a repository URL with the given credentials
+ *
+ * @param {String} protocol URL protocol (which should not be present in repositoryUrl)
+ * @param {String} repositoryUrl User-given repository URL
+ * @param {String} gitCredentials The basic auth part of the URL
+ *
+ * @return {String} The formatted Git repository URL.
+ */
+function formatAuthUrl(protocol, repositoryUrl, gitCredentials) {
+  const [match, auth, host, basePort, path] =
+    /^(?!.+:\/\/)(?:(?<auth>.*)@)?(?<host>.*?):(?<port>\d+)?:?\/?(?<path>.*)$/.exec(repositoryUrl) || [];
+  const {port, hostname, ...parsed} = parse(
+    match ? `ssh://${auth ? `${auth}@` : ''}${host}${basePort ? `:${basePort}` : ''}/${path}` : repositoryUrl
+  );
+
+  return format({
+    ...parsed,
+    auth: gitCredentials,
+    host: `${hostname}${protocol === 'ssh:' ? '' : port ? `:${port}` : ''}`,
+    protocol: protocol && /http[^s]/.test(protocol) ? 'http' : 'https',
+  });
+}
+
+/**
+ * Verify authUrl by calling git.verifyAuth, but don't throw on failure
+ *
+ * @param {Object} context semantic-release context.
+ * @param {String} authUrl Repository URL to verify
+ *
+ * @return {String} The authUrl as is if the connection was successfull, null otherwise
+ */
+async function ensureValidAuthUrl({cwd, env, branch}, authUrl) {
+  try {
+    await verifyAuth(authUrl, branch.name, {cwd, env});
+    return authUrl;
+  } catch (error) {
+    debug(error);
+    return null;
+  }
+}
 
 /**
  * Determine the the git repository URL to use to push, either:
@@ -13616,7 +13539,8 @@ const {verifyAuth} = __webpack_require__(350);
  *
  * @return {String} The formatted Git repository URL.
  */
-module.exports = async ({cwd, env, branch, options: {repositoryUrl}}) => {
+module.exports = async (context) => {
+  const {cwd, env, branch} = context;
   const GIT_TOKENS = {
     GIT_CREDENTIALS: undefined,
     GH_TOKEN: undefined,
@@ -13631,6 +13555,7 @@ module.exports = async ({cwd, env, branch, options: {repositoryUrl}}) => {
     BITBUCKET_TOKEN_BASIC_AUTH: '',
   };
 
+  let {repositoryUrl} = context.options;
   const info = hostedGitInfo.fromUrl(repositoryUrl, {noGitPlus: true});
   const {protocol, ...parsed} = parse(repositoryUrl);
 
@@ -13644,25 +13569,34 @@ module.exports = async ({cwd, env, branch, options: {repositoryUrl}}) => {
 
   // Test if push is allowed without transforming the URL (e.g. is ssh keys are set up)
   try {
+    debug('Verifying ssh auth by attempting to push to  %s', repositoryUrl);
     await verifyAuth(repositoryUrl, branch.name, {cwd, env});
   } catch (_) {
-    const envVar = Object.keys(GIT_TOKENS).find((envVar) => !isNil(env[envVar]));
-    const gitCredentials = `${GIT_TOKENS[envVar] || ''}${env[envVar] || ''}`;
+    debug('SSH key auth failed, falling back to https.');
+    const envVars = Object.keys(GIT_TOKENS).filter((envVar) => !isNil(env[envVar]));
 
-    if (gitCredentials) {
-      // If credentials are set via environment variables, convert the URL to http/https and add basic auth, otherwise return `repositoryUrl` as is
-      const [match, auth, host, path] =
-        /^(?!.+:\/\/)(?:(?<auth>.*)@)?(?<host>.*?):(?<path>.*)$/.exec(repositoryUrl) || [];
-      const {port, hostname, ...parsed} = parse(
-        match ? `ssh://${auth ? `${auth}@` : ''}${host}/${path}` : repositoryUrl
-      );
+    // Skip verification if there is no ambiguity on which env var to use for authentication
+    if (envVars.length === 1) {
+      const gitCredentials = `${GIT_TOKENS[envVars[0]] || ''}${env[envVars[0]]}`;
+      return formatAuthUrl(protocol, repositoryUrl, gitCredentials);
+    }
 
-      return format({
-        ...parsed,
-        auth: gitCredentials,
-        host: `${hostname}${protocol === 'ssh:' ? '' : port ? `:${port}` : ''}`,
-        protocol: protocol && /http[^s]/.test(protocol) ? 'http' : 'https',
-      });
+    if (envVars.length > 1) {
+      debug(`Found ${envVars.length} credentials in environment, trying all of them`);
+
+      const candidateRepositoryUrls = [];
+      for (const envVar of envVars) {
+        const gitCredentials = `${GIT_TOKENS[envVar] || ''}${env[envVar]}`;
+        const authUrl = formatAuthUrl(protocol, repositoryUrl, gitCredentials);
+        candidateRepositoryUrls.push(ensureValidAuthUrl(context, authUrl));
+      }
+
+      const validRepositoryUrls = await Promise.all(candidateRepositoryUrls);
+      const chosenAuthUrlIndex = validRepositoryUrls.findIndex((url) => url !== null);
+      if (chosenAuthUrlIndex > -1) {
+        debug(`Using "${envVars[chosenAuthUrlIndex]}" to authenticate`);
+        return validRepositoryUrls[chosenAuthUrlIndex];
+      }
     }
   }
 
@@ -13778,10 +13712,10 @@ function getPropertyByPath(source, path) {
 /* 153 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var core = __webpack_require__(893);
+var isCoreModule = __webpack_require__(884);
 
 module.exports = function isCore(x) {
-    return Object.prototype.hasOwnProperty.call(core, x);
+    return isCoreModule(x);
 };
 
 
@@ -13832,9 +13766,9 @@ module.exports = function isArrayish(obj) {
 
 const pTry = __webpack_require__(72);
 
-module.exports = concurrency => {
-	if (concurrency < 1) {
-		throw new TypeError('Expected `concurrency` to be a number from 1 and up');
+const pLimit = concurrency => {
+	if (!((Number.isInteger(concurrency) || concurrency === Infinity) && concurrency > 0)) {
+		return Promise.reject(new TypeError('Expected `concurrency` to be a number from 1 and up'));
 	}
 
 	const queue = [];
@@ -13848,29 +13782,44 @@ module.exports = concurrency => {
 		}
 	};
 
-	return fn => new Promise((resolve, reject) => {
-		const run = () => {
-			activeCount++;
+	const run = (fn, resolve, ...args) => {
+		activeCount++;
 
-			pTry(fn).then(
-				val => {
-					resolve(val);
-					next();
-				},
-				err => {
-					reject(err);
-					next();
-				}
-			);
-		};
+		const result = pTry(fn, ...args);
 
+		resolve(result);
+
+		result.then(next, next);
+	};
+
+	const enqueue = (fn, resolve, ...args) => {
 		if (activeCount < concurrency) {
-			run();
+			run(fn, resolve, ...args);
 		} else {
-			queue.push(run);
+			queue.push(run.bind(null, fn, resolve, ...args));
+		}
+	};
+
+	const generator = (fn, ...args) => new Promise(resolve => enqueue(fn, resolve, ...args));
+	Object.defineProperties(generator, {
+		activeCount: {
+			get: () => activeCount
+		},
+		pendingCount: {
+			get: () => queue.length
+		},
+		clearQueue: {
+			value: () => {
+				queue.length = 0;
+			}
 		}
 	});
+
+	return generator;
 };
+
+module.exports = pLimit;
+module.exports.default = pLimit;
 
 
 /***/ }),
@@ -14040,6 +13989,7 @@ const minVersion = (range, loose) => {
   for (let i = 0; i < range.set.length; ++i) {
     const comparators = range.set[i]
 
+    let setMin = null
     comparators.forEach((comparator) => {
       // Clone to avoid manipulating the comparator's semver object.
       const compver = new SemVer(comparator.semver.version)
@@ -14054,8 +14004,8 @@ const minVersion = (range, loose) => {
           /* fallthrough */
         case '':
         case '>=':
-          if (!minver || gt(minver, compver)) {
-            minver = compver
+          if (!setMin || gt(compver, setMin)) {
+            setMin = compver
           }
           break
         case '<':
@@ -14067,6 +14017,8 @@ const minVersion = (range, loose) => {
           throw new Error(`Unexpected operation: ${comparator.operator}`)
       }
     })
+    if (setMin && (!minver || gt(minver, setMin)))
+      minver = setMin
   }
 
   if (minver && range.test(minver)) {
@@ -14080,7 +14032,18 @@ module.exports = minVersion
 
 /***/ }),
 /* 165 */,
-/* 166 */,
+/* 166 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var bind = __webpack_require__(739);
+
+module.exports = bind.call(Function.call, Object.prototype.hasOwnProperty);
+
+
+/***/ }),
 /* 167 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -14097,20 +14060,20 @@ module.exports = gte
 
 const aliases = ['stdin', 'stdout', 'stderr'];
 
-const hasAlias = opts => aliases.some(alias => opts[alias] !== undefined);
+const hasAlias = options => aliases.some(alias => options[alias] !== undefined);
 
-const normalizeStdio = opts => {
-	if (!opts) {
+const normalizeStdio = options => {
+	if (!options) {
 		return;
 	}
 
-	const {stdio} = opts;
+	const {stdio} = options;
 
 	if (stdio === undefined) {
-		return aliases.map(alias => opts[alias]);
+		return aliases.map(alias => options[alias]);
 	}
 
-	if (hasAlias(opts)) {
+	if (hasAlias(options)) {
 		throw new Error(`It's not possible to provide \`stdio\` in combination with one of ${aliases.map(alias => `\`${alias}\``).join(', ')}`);
 	}
 
@@ -14129,8 +14092,8 @@ const normalizeStdio = opts => {
 module.exports = normalizeStdio;
 
 // `ipc` is pushed unless it is already present
-module.exports.node = opts => {
-	const stdio = normalizeStdio(opts);
+module.exports.node = options => {
+	const stdio = normalizeStdio(options);
 
 	if (stdio === 'ipc') {
 		return 'ipc';
@@ -14164,12 +14127,7 @@ class Comparator {
     return ANY
   }
   constructor (comp, options) {
-    if (!options || typeof options !== 'object') {
-      options = {
-        loose: !!options,
-        includePrerelease: false
-      }
-    }
+    options = parseOptions(options)
 
     if (comp instanceof Comparator) {
       if (comp.loose === !!options.loose) {
@@ -14291,6 +14249,7 @@ class Comparator {
 
 module.exports = Comparator
 
+const parseOptions = __webpack_require__(143)
 const {re, t} = __webpack_require__(976)
 const cmp = __webpack_require__(752)
 const debug = __webpack_require__(548)
@@ -15906,7 +15865,7 @@ exports.getDirectorySync = getDirectorySync;
 
 var _path = _interopRequireDefault(__webpack_require__(622));
 
-var _pathType = __webpack_require__(432);
+var _pathType = __webpack_require__(501);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -16114,7 +16073,7 @@ function plural(ms, msAbs, n, name) {
 
 var url = __webpack_require__(835)
 var gitHosts = __webpack_require__(317)
-var GitHost = module.exports = __webpack_require__(982)
+var GitHost = module.exports = __webpack_require__(599)
 
 var protocolToRepresentationMap = {
   'git+ssh:': 'sshurl',
@@ -16154,7 +16113,7 @@ function fromUrl (giturl, opts) {
     isGitHubShorthand(giturl) ? 'github:' + giturl : giturl
   )
   var parsed = parseGitUrl(url)
-  var shortcutMatch = url.match(new RegExp('^([^:]+):(?:(?:[^@:]+(?:[^@]+)?@)?([^/]*))[/](.+?)(?:[.]git)?($|#)'))
+  var shortcutMatch = url.match(/^([^:]+):(?:[^@]+@)?(?:([^/]*)\/)?([^#]+)/)
   var matches = Object.keys(gitHosts).map(function (gitHostName) {
     try {
       var gitHostInfo = gitHosts[gitHostName]
@@ -16168,7 +16127,7 @@ function fromUrl (giturl, opts) {
       var defaultRepresentation = null
       if (shortcutMatch && shortcutMatch[1] === gitHostName) {
         user = shortcutMatch[2] && decodeURIComponent(shortcutMatch[2])
-        project = decodeURIComponent(shortcutMatch[3])
+        project = decodeURIComponent(shortcutMatch[3].replace(/\.git$/, ''))
         defaultRepresentation = 'shortcut'
       } else {
         if (parsed.host && parsed.host !== gitHostInfo.domain && parsed.host.replace(/^www[.]/, '') !== gitHostInfo.domain) return
@@ -16263,770 +16222,7 @@ function parseGitUrl (giturl) {
 
 /***/ }),
 /* 191 */,
-/* 192 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-
-var PlainValue = __webpack_require__(513);
-var resolveSeq = __webpack_require__(232);
-var Schema = __webpack_require__(421);
-
-const defaultOptions = {
-  anchorPrefix: 'a',
-  customTags: null,
-  indent: 2,
-  indentSeq: true,
-  keepCstNodes: false,
-  keepNodeTypes: true,
-  keepBlobsInJSON: true,
-  mapAsMap: false,
-  maxAliasCount: 100,
-  prettyErrors: false,
-  // TODO Set true in v2
-  simpleKeys: false,
-  version: '1.2'
-};
-const scalarOptions = {
-  get binary() {
-    return resolveSeq.binaryOptions;
-  },
-
-  set binary(opt) {
-    Object.assign(resolveSeq.binaryOptions, opt);
-  },
-
-  get bool() {
-    return resolveSeq.boolOptions;
-  },
-
-  set bool(opt) {
-    Object.assign(resolveSeq.boolOptions, opt);
-  },
-
-  get int() {
-    return resolveSeq.intOptions;
-  },
-
-  set int(opt) {
-    Object.assign(resolveSeq.intOptions, opt);
-  },
-
-  get null() {
-    return resolveSeq.nullOptions;
-  },
-
-  set null(opt) {
-    Object.assign(resolveSeq.nullOptions, opt);
-  },
-
-  get str() {
-    return resolveSeq.strOptions;
-  },
-
-  set str(opt) {
-    Object.assign(resolveSeq.strOptions, opt);
-  }
-
-};
-const documentOptions = {
-  '1.0': {
-    schema: 'yaml-1.1',
-    merge: true,
-    tagPrefixes: [{
-      handle: '!',
-      prefix: PlainValue.defaultTagPrefix
-    }, {
-      handle: '!!',
-      prefix: 'tag:private.yaml.org,2002:'
-    }]
-  },
-  '1.1': {
-    schema: 'yaml-1.1',
-    merge: true,
-    tagPrefixes: [{
-      handle: '!',
-      prefix: '!'
-    }, {
-      handle: '!!',
-      prefix: PlainValue.defaultTagPrefix
-    }]
-  },
-  '1.2': {
-    schema: 'core',
-    merge: false,
-    tagPrefixes: [{
-      handle: '!',
-      prefix: '!'
-    }, {
-      handle: '!!',
-      prefix: PlainValue.defaultTagPrefix
-    }]
-  }
-};
-
-function stringifyTag(doc, tag) {
-  if ((doc.version || doc.options.version) === '1.0') {
-    const priv = tag.match(/^tag:private\.yaml\.org,2002:([^:/]+)$/);
-    if (priv) return '!' + priv[1];
-    const vocab = tag.match(/^tag:([a-zA-Z0-9-]+)\.yaml\.org,2002:(.*)/);
-    return vocab ? `!${vocab[1]}/${vocab[2]}` : `!${tag.replace(/^tag:/, '')}`;
-  }
-
-  let p = doc.tagPrefixes.find(p => tag.indexOf(p.prefix) === 0);
-
-  if (!p) {
-    const dtp = doc.getDefaults().tagPrefixes;
-    p = dtp && dtp.find(p => tag.indexOf(p.prefix) === 0);
-  }
-
-  if (!p) return tag[0] === '!' ? tag : `!<${tag}>`;
-  const suffix = tag.substr(p.prefix.length).replace(/[!,[\]{}]/g, ch => ({
-    '!': '%21',
-    ',': '%2C',
-    '[': '%5B',
-    ']': '%5D',
-    '{': '%7B',
-    '}': '%7D'
-  })[ch]);
-  return p.handle + suffix;
-}
-
-function getTagObject(tags, item) {
-  if (item instanceof resolveSeq.Alias) return resolveSeq.Alias;
-
-  if (item.tag) {
-    const match = tags.filter(t => t.tag === item.tag);
-    if (match.length > 0) return match.find(t => t.format === item.format) || match[0];
-  }
-
-  let tagObj, obj;
-
-  if (item instanceof resolveSeq.Scalar) {
-    obj = item.value; // TODO: deprecate/remove class check
-
-    const match = tags.filter(t => t.identify && t.identify(obj) || t.class && obj instanceof t.class);
-    tagObj = match.find(t => t.format === item.format) || match.find(t => !t.format);
-  } else {
-    obj = item;
-    tagObj = tags.find(t => t.nodeClass && obj instanceof t.nodeClass);
-  }
-
-  if (!tagObj) {
-    const name = obj && obj.constructor ? obj.constructor.name : typeof obj;
-    throw new Error(`Tag not resolved for ${name} value`);
-  }
-
-  return tagObj;
-} // needs to be called before value stringifier to allow for circular anchor refs
-
-
-function stringifyProps(node, tagObj, {
-  anchors,
-  doc
-}) {
-  const props = [];
-  const anchor = doc.anchors.getName(node);
-
-  if (anchor) {
-    anchors[anchor] = node;
-    props.push(`&${anchor}`);
-  }
-
-  if (node.tag) {
-    props.push(stringifyTag(doc, node.tag));
-  } else if (!tagObj.default) {
-    props.push(stringifyTag(doc, tagObj.tag));
-  }
-
-  return props.join(' ');
-}
-
-function stringify(item, ctx, onComment, onChompKeep) {
-  const {
-    anchors,
-    schema
-  } = ctx.doc;
-  let tagObj;
-
-  if (!(item instanceof resolveSeq.Node)) {
-    const createCtx = {
-      aliasNodes: [],
-      onTagObj: o => tagObj = o,
-      prevObjects: new Map()
-    };
-    item = schema.createNode(item, true, null, createCtx);
-
-    for (const alias of createCtx.aliasNodes) {
-      alias.source = alias.source.node;
-      let name = anchors.getName(alias.source);
-
-      if (!name) {
-        name = anchors.newName();
-        anchors.map[name] = alias.source;
-      }
-    }
-  }
-
-  if (item instanceof resolveSeq.Pair) return item.toString(ctx, onComment, onChompKeep);
-  if (!tagObj) tagObj = getTagObject(schema.tags, item);
-  const props = stringifyProps(item, tagObj, ctx);
-  if (props.length > 0) ctx.indentAtStart = (ctx.indentAtStart || 0) + props.length + 1;
-  const str = typeof tagObj.stringify === 'function' ? tagObj.stringify(item, ctx, onComment, onChompKeep) : item instanceof resolveSeq.Scalar ? resolveSeq.stringifyString(item, ctx, onComment, onChompKeep) : item.toString(ctx, onComment, onChompKeep);
-  if (!props) return str;
-  return item instanceof resolveSeq.Scalar || str[0] === '{' || str[0] === '[' ? `${props} ${str}` : `${props}\n${ctx.indent}${str}`;
-}
-
-class Anchors {
-  static validAnchorNode(node) {
-    return node instanceof resolveSeq.Scalar || node instanceof resolveSeq.YAMLSeq || node instanceof resolveSeq.YAMLMap;
-  }
-
-  constructor(prefix) {
-    PlainValue._defineProperty(this, "map", {});
-
-    this.prefix = prefix;
-  }
-
-  createAlias(node, name) {
-    this.setAnchor(node, name);
-    return new resolveSeq.Alias(node);
-  }
-
-  createMergePair(...sources) {
-    const merge = new resolveSeq.Merge();
-    merge.value.items = sources.map(s => {
-      if (s instanceof resolveSeq.Alias) {
-        if (s.source instanceof resolveSeq.YAMLMap) return s;
-      } else if (s instanceof resolveSeq.YAMLMap) {
-        return this.createAlias(s);
-      }
-
-      throw new Error('Merge sources must be Map nodes or their Aliases');
-    });
-    return merge;
-  }
-
-  getName(node) {
-    const {
-      map
-    } = this;
-    return Object.keys(map).find(a => map[a] === node);
-  }
-
-  getNames() {
-    return Object.keys(this.map);
-  }
-
-  getNode(name) {
-    return this.map[name];
-  }
-
-  newName(prefix) {
-    if (!prefix) prefix = this.prefix;
-    const names = Object.keys(this.map);
-
-    for (let i = 1; true; ++i) {
-      const name = `${prefix}${i}`;
-      if (!names.includes(name)) return name;
-    }
-  } // During parsing, map & aliases contain CST nodes
-
-
-  resolveNodes() {
-    const {
-      map,
-      _cstAliases
-    } = this;
-    Object.keys(map).forEach(a => {
-      map[a] = map[a].resolved;
-    });
-
-    _cstAliases.forEach(a => {
-      a.source = a.source.resolved;
-    });
-
-    delete this._cstAliases;
-  }
-
-  setAnchor(node, name) {
-    if (node != null && !Anchors.validAnchorNode(node)) {
-      throw new Error('Anchors may only be set for Scalar, Seq and Map nodes');
-    }
-
-    if (name && /[\x00-\x19\s,[\]{}]/.test(name)) {
-      throw new Error('Anchor names must not contain whitespace or control characters');
-    }
-
-    const {
-      map
-    } = this;
-    const prev = node && Object.keys(map).find(a => map[a] === node);
-
-    if (prev) {
-      if (!name) {
-        return prev;
-      } else if (prev !== name) {
-        delete map[prev];
-        map[name] = node;
-      }
-    } else {
-      if (!name) {
-        if (!node) return null;
-        name = this.newName();
-      }
-
-      map[name] = node;
-    }
-
-    return name;
-  }
-
-}
-
-const visit = (node, tags) => {
-  if (node && typeof node === 'object') {
-    const {
-      tag
-    } = node;
-
-    if (node instanceof resolveSeq.Collection) {
-      if (tag) tags[tag] = true;
-      node.items.forEach(n => visit(n, tags));
-    } else if (node instanceof resolveSeq.Pair) {
-      visit(node.key, tags);
-      visit(node.value, tags);
-    } else if (node instanceof resolveSeq.Scalar) {
-      if (tag) tags[tag] = true;
-    }
-  }
-
-  return tags;
-};
-
-const listTagNames = node => Object.keys(visit(node, {}));
-
-function parseContents(doc, contents) {
-  const comments = {
-    before: [],
-    after: []
-  };
-  let body = undefined;
-  let spaceBefore = false;
-
-  for (const node of contents) {
-    if (node.valueRange) {
-      if (body !== undefined) {
-        const msg = 'Document contains trailing content not separated by a ... or --- line';
-        doc.errors.push(new PlainValue.YAMLSyntaxError(node, msg));
-        break;
-      }
-
-      const res = resolveSeq.resolveNode(doc, node);
-
-      if (spaceBefore) {
-        res.spaceBefore = true;
-        spaceBefore = false;
-      }
-
-      body = res;
-    } else if (node.comment !== null) {
-      const cc = body === undefined ? comments.before : comments.after;
-      cc.push(node.comment);
-    } else if (node.type === PlainValue.Type.BLANK_LINE) {
-      spaceBefore = true;
-
-      if (body === undefined && comments.before.length > 0 && !doc.commentBefore) {
-        // space-separated comments at start are parsed as document comments
-        doc.commentBefore = comments.before.join('\n');
-        comments.before = [];
-      }
-    }
-  }
-
-  doc.contents = body || null;
-
-  if (!body) {
-    doc.comment = comments.before.concat(comments.after).join('\n') || null;
-  } else {
-    const cb = comments.before.join('\n');
-
-    if (cb) {
-      const cbNode = body instanceof resolveSeq.Collection && body.items[0] ? body.items[0] : body;
-      cbNode.commentBefore = cbNode.commentBefore ? `${cb}\n${cbNode.commentBefore}` : cb;
-    }
-
-    doc.comment = comments.after.join('\n') || null;
-  }
-}
-
-function resolveTagDirective({
-  tagPrefixes
-}, directive) {
-  const [handle, prefix] = directive.parameters;
-
-  if (!handle || !prefix) {
-    const msg = 'Insufficient parameters given for %TAG directive';
-    throw new PlainValue.YAMLSemanticError(directive, msg);
-  }
-
-  if (tagPrefixes.some(p => p.handle === handle)) {
-    const msg = 'The %TAG directive must only be given at most once per handle in the same document.';
-    throw new PlainValue.YAMLSemanticError(directive, msg);
-  }
-
-  return {
-    handle,
-    prefix
-  };
-}
-
-function resolveYamlDirective(doc, directive) {
-  let [version] = directive.parameters;
-  if (directive.name === 'YAML:1.0') version = '1.0';
-
-  if (!version) {
-    const msg = 'Insufficient parameters given for %YAML directive';
-    throw new PlainValue.YAMLSemanticError(directive, msg);
-  }
-
-  if (!documentOptions[version]) {
-    const v0 = doc.version || doc.options.version;
-    const msg = `Document will be parsed as YAML ${v0} rather than YAML ${version}`;
-    doc.warnings.push(new PlainValue.YAMLWarning(directive, msg));
-  }
-
-  return version;
-}
-
-function parseDirectives(doc, directives, prevDoc) {
-  const directiveComments = [];
-  let hasDirectives = false;
-
-  for (const directive of directives) {
-    const {
-      comment,
-      name
-    } = directive;
-
-    switch (name) {
-      case 'TAG':
-        try {
-          doc.tagPrefixes.push(resolveTagDirective(doc, directive));
-        } catch (error) {
-          doc.errors.push(error);
-        }
-
-        hasDirectives = true;
-        break;
-
-      case 'YAML':
-      case 'YAML:1.0':
-        if (doc.version) {
-          const msg = 'The %YAML directive must only be given at most once per document.';
-          doc.errors.push(new PlainValue.YAMLSemanticError(directive, msg));
-        }
-
-        try {
-          doc.version = resolveYamlDirective(doc, directive);
-        } catch (error) {
-          doc.errors.push(error);
-        }
-
-        hasDirectives = true;
-        break;
-
-      default:
-        if (name) {
-          const msg = `YAML only supports %TAG and %YAML directives, and not %${name}`;
-          doc.warnings.push(new PlainValue.YAMLWarning(directive, msg));
-        }
-
-    }
-
-    if (comment) directiveComments.push(comment);
-  }
-
-  if (prevDoc && !hasDirectives && '1.1' === (doc.version || prevDoc.version || doc.options.version)) {
-    const copyTagPrefix = ({
-      handle,
-      prefix
-    }) => ({
-      handle,
-      prefix
-    });
-
-    doc.tagPrefixes = prevDoc.tagPrefixes.map(copyTagPrefix);
-    doc.version = prevDoc.version;
-  }
-
-  doc.commentBefore = directiveComments.join('\n') || null;
-}
-
-function assertCollection(contents) {
-  if (contents instanceof resolveSeq.Collection) return true;
-  throw new Error('Expected a YAML collection as document contents');
-}
-
-class Document {
-  constructor(options) {
-    this.anchors = new Anchors(options.anchorPrefix);
-    this.commentBefore = null;
-    this.comment = null;
-    this.contents = null;
-    this.directivesEndMarker = null;
-    this.errors = [];
-    this.options = options;
-    this.schema = null;
-    this.tagPrefixes = [];
-    this.version = null;
-    this.warnings = [];
-  }
-
-  add(value) {
-    assertCollection(this.contents);
-    return this.contents.add(value);
-  }
-
-  addIn(path, value) {
-    assertCollection(this.contents);
-    this.contents.addIn(path, value);
-  }
-
-  delete(key) {
-    assertCollection(this.contents);
-    return this.contents.delete(key);
-  }
-
-  deleteIn(path) {
-    if (resolveSeq.isEmptyPath(path)) {
-      if (this.contents == null) return false;
-      this.contents = null;
-      return true;
-    }
-
-    assertCollection(this.contents);
-    return this.contents.deleteIn(path);
-  }
-
-  getDefaults() {
-    return Document.defaults[this.version] || Document.defaults[this.options.version] || {};
-  }
-
-  get(key, keepScalar) {
-    return this.contents instanceof resolveSeq.Collection ? this.contents.get(key, keepScalar) : undefined;
-  }
-
-  getIn(path, keepScalar) {
-    if (resolveSeq.isEmptyPath(path)) return !keepScalar && this.contents instanceof resolveSeq.Scalar ? this.contents.value : this.contents;
-    return this.contents instanceof resolveSeq.Collection ? this.contents.getIn(path, keepScalar) : undefined;
-  }
-
-  has(key) {
-    return this.contents instanceof resolveSeq.Collection ? this.contents.has(key) : false;
-  }
-
-  hasIn(path) {
-    if (resolveSeq.isEmptyPath(path)) return this.contents !== undefined;
-    return this.contents instanceof resolveSeq.Collection ? this.contents.hasIn(path) : false;
-  }
-
-  set(key, value) {
-    assertCollection(this.contents);
-    this.contents.set(key, value);
-  }
-
-  setIn(path, value) {
-    if (resolveSeq.isEmptyPath(path)) this.contents = value;else {
-      assertCollection(this.contents);
-      this.contents.setIn(path, value);
-    }
-  }
-
-  setSchema(id, customTags) {
-    if (!id && !customTags && this.schema) return;
-    if (typeof id === 'number') id = id.toFixed(1);
-
-    if (id === '1.0' || id === '1.1' || id === '1.2') {
-      if (this.version) this.version = id;else this.options.version = id;
-      delete this.options.schema;
-    } else if (id && typeof id === 'string') {
-      this.options.schema = id;
-    }
-
-    if (Array.isArray(customTags)) this.options.customTags = customTags;
-    const opt = Object.assign({}, this.getDefaults(), this.options);
-    this.schema = new Schema.Schema(opt);
-  }
-
-  parse(node, prevDoc) {
-    if (this.options.keepCstNodes) this.cstNode = node;
-    if (this.options.keepNodeTypes) this.type = 'DOCUMENT';
-    const {
-      directives = [],
-      contents = [],
-      directivesEndMarker,
-      error,
-      valueRange
-    } = node;
-
-    if (error) {
-      if (!error.source) error.source = this;
-      this.errors.push(error);
-    }
-
-    parseDirectives(this, directives, prevDoc);
-    if (directivesEndMarker) this.directivesEndMarker = true;
-    this.range = valueRange ? [valueRange.start, valueRange.end] : null;
-    this.setSchema();
-    this.anchors._cstAliases = [];
-    parseContents(this, contents);
-    this.anchors.resolveNodes();
-
-    if (this.options.prettyErrors) {
-      for (const error of this.errors) if (error instanceof PlainValue.YAMLError) error.makePretty();
-
-      for (const warn of this.warnings) if (warn instanceof PlainValue.YAMLError) warn.makePretty();
-    }
-
-    return this;
-  }
-
-  listNonDefaultTags() {
-    return listTagNames(this.contents).filter(t => t.indexOf(Schema.Schema.defaultPrefix) !== 0);
-  }
-
-  setTagPrefix(handle, prefix) {
-    if (handle[0] !== '!' || handle[handle.length - 1] !== '!') throw new Error('Handle must start and end with !');
-
-    if (prefix) {
-      const prev = this.tagPrefixes.find(p => p.handle === handle);
-      if (prev) prev.prefix = prefix;else this.tagPrefixes.push({
-        handle,
-        prefix
-      });
-    } else {
-      this.tagPrefixes = this.tagPrefixes.filter(p => p.handle !== handle);
-    }
-  }
-
-  toJSON(arg, onAnchor) {
-    const {
-      keepBlobsInJSON,
-      mapAsMap,
-      maxAliasCount
-    } = this.options;
-    const keep = keepBlobsInJSON && (typeof arg !== 'string' || !(this.contents instanceof resolveSeq.Scalar));
-    const ctx = {
-      doc: this,
-      indentStep: '  ',
-      keep,
-      mapAsMap: keep && !!mapAsMap,
-      maxAliasCount,
-      stringify // Requiring directly in Pair would create circular dependencies
-
-    };
-    const anchorNames = Object.keys(this.anchors.map);
-    if (anchorNames.length > 0) ctx.anchors = new Map(anchorNames.map(name => [this.anchors.map[name], {
-      alias: [],
-      aliasCount: 0,
-      count: 1
-    }]));
-    const res = resolveSeq.toJSON(this.contents, arg, ctx);
-    if (typeof onAnchor === 'function' && ctx.anchors) for (const {
-      count,
-      res
-    } of ctx.anchors.values()) onAnchor(res, count);
-    return res;
-  }
-
-  toString() {
-    if (this.errors.length > 0) throw new Error('Document with errors cannot be stringified');
-    const indentSize = this.options.indent;
-
-    if (!Number.isInteger(indentSize) || indentSize <= 0) {
-      const s = JSON.stringify(indentSize);
-      throw new Error(`"indent" option must be a positive integer, not ${s}`);
-    }
-
-    this.setSchema();
-    const lines = [];
-    let hasDirectives = false;
-
-    if (this.version) {
-      let vd = '%YAML 1.2';
-
-      if (this.schema.name === 'yaml-1.1') {
-        if (this.version === '1.0') vd = '%YAML:1.0';else if (this.version === '1.1') vd = '%YAML 1.1';
-      }
-
-      lines.push(vd);
-      hasDirectives = true;
-    }
-
-    const tagNames = this.listNonDefaultTags();
-    this.tagPrefixes.forEach(({
-      handle,
-      prefix
-    }) => {
-      if (tagNames.some(t => t.indexOf(prefix) === 0)) {
-        lines.push(`%TAG ${handle} ${prefix}`);
-        hasDirectives = true;
-      }
-    });
-    if (hasDirectives || this.directivesEndMarker) lines.push('---');
-
-    if (this.commentBefore) {
-      if (hasDirectives || !this.directivesEndMarker) lines.unshift('');
-      lines.unshift(this.commentBefore.replace(/^/gm, '#'));
-    }
-
-    const ctx = {
-      anchors: {},
-      doc: this,
-      indent: '',
-      indentStep: ' '.repeat(indentSize),
-      stringify // Requiring directly in nodes would create circular dependencies
-
-    };
-    let chompKeep = false;
-    let contentComment = null;
-
-    if (this.contents) {
-      if (this.contents instanceof resolveSeq.Node) {
-        if (this.contents.spaceBefore && (hasDirectives || this.directivesEndMarker)) lines.push('');
-        if (this.contents.commentBefore) lines.push(this.contents.commentBefore.replace(/^/gm, '#')); // top-level block scalars need to be indented if followed by a comment
-
-        ctx.forceBlockIndent = !!this.comment;
-        contentComment = this.contents.comment;
-      }
-
-      const onChompKeep = contentComment ? null : () => chompKeep = true;
-      const body = stringify(this.contents, ctx, () => contentComment = null, onChompKeep);
-      lines.push(resolveSeq.addComment(body, '', contentComment));
-    } else if (this.contents !== undefined) {
-      lines.push(stringify(this.contents, ctx));
-    }
-
-    if (this.comment) {
-      if ((!chompKeep || contentComment) && lines[lines.length - 1] !== '') lines.push('');
-      lines.push(this.comment.replace(/^/gm, '#'));
-    }
-
-    return lines.join('\n') + '\n';
-  }
-
-}
-
-PlainValue._defineProperty(Document, "defaults", documentOptions);
-
-exports.Document = Document;
-exports.defaultOptions = defaultOptions;
-exports.scalarOptions = scalarOptions;
-
-
-/***/ }),
+/* 192 */,
 /* 193 */,
 /* 194 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -19800,7 +18996,7 @@ if (debugUtil && debugUtil.debuglog) {
 /*</replacement>*/
 
 var BufferList = __webpack_require__(931);
-var destroyImpl = __webpack_require__(546);
+var destroyImpl = __webpack_require__(232);
 var StringDecoder;
 
 util.inherits(Readable, Stream);
@@ -19890,7 +19086,7 @@ function ReadableState(options, stream) {
   this.decoder = null;
   this.encoding = null;
   if (options.encoding) {
-    if (!StringDecoder) StringDecoder = __webpack_require__(991).StringDecoder;
+    if (!StringDecoder) StringDecoder = __webpack_require__(432).StringDecoder;
     this.decoder = new StringDecoder(options.encoding);
     this.encoding = options.encoding;
   }
@@ -20046,7 +19242,7 @@ Readable.prototype.isPaused = function () {
 
 // backwards compatibility.
 Readable.prototype.setEncoding = function (enc) {
-  if (!StringDecoder) StringDecoder = __webpack_require__(991).StringDecoder;
+  if (!StringDecoder) StringDecoder = __webpack_require__(432).StringDecoder;
   this._readableState.decoder = new StringDecoder(enc);
   this._readableState.encoding = enc;
   return this;
@@ -21149,6 +20345,5243 @@ exports["default"] = LinesAndColumns;
 /* 230 */,
 /* 231 */,
 /* 232 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+/*<replacement>*/
+
+var pna = __webpack_require__(334);
+/*</replacement>*/
+
+// undocumented cb() API, needed for core, not for public API
+function destroy(err, cb) {
+  var _this = this;
+
+  var readableDestroyed = this._readableState && this._readableState.destroyed;
+  var writableDestroyed = this._writableState && this._writableState.destroyed;
+
+  if (readableDestroyed || writableDestroyed) {
+    if (cb) {
+      cb(err);
+    } else if (err && (!this._writableState || !this._writableState.errorEmitted)) {
+      pna.nextTick(emitErrorNT, this, err);
+    }
+    return this;
+  }
+
+  // we set destroyed to true before firing error callbacks in order
+  // to make it re-entrance safe in case destroy() is called within callbacks
+
+  if (this._readableState) {
+    this._readableState.destroyed = true;
+  }
+
+  // if this is a duplex stream mark the writable part as destroyed as well
+  if (this._writableState) {
+    this._writableState.destroyed = true;
+  }
+
+  this._destroy(err || null, function (err) {
+    if (!cb && err) {
+      pna.nextTick(emitErrorNT, _this, err);
+      if (_this._writableState) {
+        _this._writableState.errorEmitted = true;
+      }
+    } else if (cb) {
+      cb(err);
+    }
+  });
+
+  return this;
+}
+
+function undestroy() {
+  if (this._readableState) {
+    this._readableState.destroyed = false;
+    this._readableState.reading = false;
+    this._readableState.ended = false;
+    this._readableState.endEmitted = false;
+  }
+
+  if (this._writableState) {
+    this._writableState.destroyed = false;
+    this._writableState.ended = false;
+    this._writableState.ending = false;
+    this._writableState.finished = false;
+    this._writableState.errorEmitted = false;
+  }
+}
+
+function emitErrorNT(self, err) {
+  self.emit('error', err);
+}
+
+module.exports = {
+  destroy: destroy,
+  undestroy: undestroy
+};
+
+/***/ }),
+/* 233 */,
+/* 234 */,
+/* 235 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const callsites = __webpack_require__(253);
+
+module.exports = filepath => {
+	const stacks = callsites();
+
+	if (!filepath) {
+		return stacks[2].getFileName();
+	}
+
+	let seenVal = false;
+
+	// Skip the first stack as it's this function
+	stacks.shift();
+
+	for (const stack of stacks) {
+		const parentFilepath = stack.getFileName();
+
+		if (typeof parentFilepath !== 'string') {
+			continue;
+		}
+
+		if (parentFilepath === filepath) {
+			seenVal = true;
+			continue;
+		}
+
+		// Skip native modules
+		if (parentFilepath === 'module.js') {
+			continue;
+		}
+
+		if (seenVal && parentFilepath !== filepath) {
+			return parentFilepath;
+		}
+	}
+};
+
+
+/***/ }),
+/* 236 */
+/***/ (function(module) {
+
+/**
+ * lodash (Custom Build) <https://lodash.com/>
+ * Build: `lodash modularize exports="npm" -o ./`
+ * Copyright jQuery Foundation and other contributors <https://jquery.org/>
+ * Released under MIT license <https://lodash.com/license>
+ * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ */
+
+/** Used as references for various `Number` constants. */
+var MAX_SAFE_INTEGER = 9007199254740991;
+
+/** `Object#toString` result references. */
+var argsTag = '[object Arguments]',
+    funcTag = '[object Function]',
+    genTag = '[object GeneratorFunction]',
+    mapTag = '[object Map]',
+    objectTag = '[object Object]',
+    promiseTag = '[object Promise]',
+    setTag = '[object Set]',
+    stringTag = '[object String]',
+    weakMapTag = '[object WeakMap]';
+
+var dataViewTag = '[object DataView]';
+
+/**
+ * Used to match `RegExp`
+ * [syntax characters](http://ecma-international.org/ecma-262/7.0/#sec-patterns).
+ */
+var reRegExpChar = /[\\^$.*+?()[\]{}|]/g;
+
+/** Used to detect host constructors (Safari). */
+var reIsHostCtor = /^\[object .+?Constructor\]$/;
+
+/** Used to detect unsigned integer values. */
+var reIsUint = /^(?:0|[1-9]\d*)$/;
+
+/** Used to compose unicode character classes. */
+var rsAstralRange = '\\ud800-\\udfff',
+    rsComboMarksRange = '\\u0300-\\u036f\\ufe20-\\ufe23',
+    rsComboSymbolsRange = '\\u20d0-\\u20f0',
+    rsVarRange = '\\ufe0e\\ufe0f';
+
+/** Used to compose unicode capture groups. */
+var rsAstral = '[' + rsAstralRange + ']',
+    rsCombo = '[' + rsComboMarksRange + rsComboSymbolsRange + ']',
+    rsFitz = '\\ud83c[\\udffb-\\udfff]',
+    rsModifier = '(?:' + rsCombo + '|' + rsFitz + ')',
+    rsNonAstral = '[^' + rsAstralRange + ']',
+    rsRegional = '(?:\\ud83c[\\udde6-\\uddff]){2}',
+    rsSurrPair = '[\\ud800-\\udbff][\\udc00-\\udfff]',
+    rsZWJ = '\\u200d';
+
+/** Used to compose unicode regexes. */
+var reOptMod = rsModifier + '?',
+    rsOptVar = '[' + rsVarRange + ']?',
+    rsOptJoin = '(?:' + rsZWJ + '(?:' + [rsNonAstral, rsRegional, rsSurrPair].join('|') + ')' + rsOptVar + reOptMod + ')*',
+    rsSeq = rsOptVar + reOptMod + rsOptJoin,
+    rsSymbol = '(?:' + [rsNonAstral + rsCombo + '?', rsCombo, rsRegional, rsSurrPair, rsAstral].join('|') + ')';
+
+/** Used to match [string symbols](https://mathiasbynens.be/notes/javascript-unicode). */
+var reUnicode = RegExp(rsFitz + '(?=' + rsFitz + ')|' + rsSymbol + rsSeq, 'g');
+
+/** Used to detect strings with [zero-width joiners or code points from the astral planes](http://eev.ee/blog/2015/09/12/dark-corners-of-unicode/). */
+var reHasUnicode = RegExp('[' + rsZWJ + rsAstralRange  + rsComboMarksRange + rsComboSymbolsRange + rsVarRange + ']');
+
+/** Detect free variable `global` from Node.js. */
+var freeGlobal = typeof global == 'object' && global && global.Object === Object && global;
+
+/** Detect free variable `self`. */
+var freeSelf = typeof self == 'object' && self && self.Object === Object && self;
+
+/** Used as a reference to the global object. */
+var root = freeGlobal || freeSelf || Function('return this')();
+
+/**
+ * A specialized version of `_.map` for arrays without support for iteratee
+ * shorthands.
+ *
+ * @private
+ * @param {Array} [array] The array to iterate over.
+ * @param {Function} iteratee The function invoked per iteration.
+ * @returns {Array} Returns the new mapped array.
+ */
+function arrayMap(array, iteratee) {
+  var index = -1,
+      length = array ? array.length : 0,
+      result = Array(length);
+
+  while (++index < length) {
+    result[index] = iteratee(array[index], index, array);
+  }
+  return result;
+}
+
+/**
+ * Converts an ASCII `string` to an array.
+ *
+ * @private
+ * @param {string} string The string to convert.
+ * @returns {Array} Returns the converted array.
+ */
+function asciiToArray(string) {
+  return string.split('');
+}
+
+/**
+ * The base implementation of `_.times` without support for iteratee shorthands
+ * or max array length checks.
+ *
+ * @private
+ * @param {number} n The number of times to invoke `iteratee`.
+ * @param {Function} iteratee The function invoked per iteration.
+ * @returns {Array} Returns the array of results.
+ */
+function baseTimes(n, iteratee) {
+  var index = -1,
+      result = Array(n);
+
+  while (++index < n) {
+    result[index] = iteratee(index);
+  }
+  return result;
+}
+
+/**
+ * The base implementation of `_.values` and `_.valuesIn` which creates an
+ * array of `object` property values corresponding to the property names
+ * of `props`.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @param {Array} props The property names to get values for.
+ * @returns {Object} Returns the array of property values.
+ */
+function baseValues(object, props) {
+  return arrayMap(props, function(key) {
+    return object[key];
+  });
+}
+
+/**
+ * Gets the value at `key` of `object`.
+ *
+ * @private
+ * @param {Object} [object] The object to query.
+ * @param {string} key The key of the property to get.
+ * @returns {*} Returns the property value.
+ */
+function getValue(object, key) {
+  return object == null ? undefined : object[key];
+}
+
+/**
+ * Checks if `string` contains Unicode symbols.
+ *
+ * @private
+ * @param {string} string The string to inspect.
+ * @returns {boolean} Returns `true` if a symbol is found, else `false`.
+ */
+function hasUnicode(string) {
+  return reHasUnicode.test(string);
+}
+
+/**
+ * Checks if `value` is a host object in IE < 9.
+ *
+ * @private
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a host object, else `false`.
+ */
+function isHostObject(value) {
+  // Many host objects are `Object` objects that can coerce to strings
+  // despite having improperly defined `toString` methods.
+  var result = false;
+  if (value != null && typeof value.toString != 'function') {
+    try {
+      result = !!(value + '');
+    } catch (e) {}
+  }
+  return result;
+}
+
+/**
+ * Converts `iterator` to an array.
+ *
+ * @private
+ * @param {Object} iterator The iterator to convert.
+ * @returns {Array} Returns the converted array.
+ */
+function iteratorToArray(iterator) {
+  var data,
+      result = [];
+
+  while (!(data = iterator.next()).done) {
+    result.push(data.value);
+  }
+  return result;
+}
+
+/**
+ * Converts `map` to its key-value pairs.
+ *
+ * @private
+ * @param {Object} map The map to convert.
+ * @returns {Array} Returns the key-value pairs.
+ */
+function mapToArray(map) {
+  var index = -1,
+      result = Array(map.size);
+
+  map.forEach(function(value, key) {
+    result[++index] = [key, value];
+  });
+  return result;
+}
+
+/**
+ * Creates a unary function that invokes `func` with its argument transformed.
+ *
+ * @private
+ * @param {Function} func The function to wrap.
+ * @param {Function} transform The argument transform.
+ * @returns {Function} Returns the new function.
+ */
+function overArg(func, transform) {
+  return function(arg) {
+    return func(transform(arg));
+  };
+}
+
+/**
+ * Converts `set` to an array of its values.
+ *
+ * @private
+ * @param {Object} set The set to convert.
+ * @returns {Array} Returns the values.
+ */
+function setToArray(set) {
+  var index = -1,
+      result = Array(set.size);
+
+  set.forEach(function(value) {
+    result[++index] = value;
+  });
+  return result;
+}
+
+/**
+ * Converts `string` to an array.
+ *
+ * @private
+ * @param {string} string The string to convert.
+ * @returns {Array} Returns the converted array.
+ */
+function stringToArray(string) {
+  return hasUnicode(string)
+    ? unicodeToArray(string)
+    : asciiToArray(string);
+}
+
+/**
+ * Converts a Unicode `string` to an array.
+ *
+ * @private
+ * @param {string} string The string to convert.
+ * @returns {Array} Returns the converted array.
+ */
+function unicodeToArray(string) {
+  return string.match(reUnicode) || [];
+}
+
+/** Used for built-in method references. */
+var funcProto = Function.prototype,
+    objectProto = Object.prototype;
+
+/** Used to detect overreaching core-js shims. */
+var coreJsData = root['__core-js_shared__'];
+
+/** Used to detect methods masquerading as native. */
+var maskSrcKey = (function() {
+  var uid = /[^.]+$/.exec(coreJsData && coreJsData.keys && coreJsData.keys.IE_PROTO || '');
+  return uid ? ('Symbol(src)_1.' + uid) : '';
+}());
+
+/** Used to resolve the decompiled source of functions. */
+var funcToString = funcProto.toString;
+
+/** Used to check objects for own properties. */
+var hasOwnProperty = objectProto.hasOwnProperty;
+
+/**
+ * Used to resolve the
+ * [`toStringTag`](http://ecma-international.org/ecma-262/7.0/#sec-object.prototype.tostring)
+ * of values.
+ */
+var objectToString = objectProto.toString;
+
+/** Used to detect if a method is native. */
+var reIsNative = RegExp('^' +
+  funcToString.call(hasOwnProperty).replace(reRegExpChar, '\\$&')
+  .replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, '$1.*?') + '$'
+);
+
+/** Built-in value references. */
+var Symbol = root.Symbol,
+    iteratorSymbol = Symbol ? Symbol.iterator : undefined,
+    propertyIsEnumerable = objectProto.propertyIsEnumerable;
+
+/* Built-in method references for those with the same name as other `lodash` methods. */
+var nativeKeys = overArg(Object.keys, Object);
+
+/* Built-in method references that are verified to be native. */
+var DataView = getNative(root, 'DataView'),
+    Map = getNative(root, 'Map'),
+    Promise = getNative(root, 'Promise'),
+    Set = getNative(root, 'Set'),
+    WeakMap = getNative(root, 'WeakMap');
+
+/** Used to detect maps, sets, and weakmaps. */
+var dataViewCtorString = toSource(DataView),
+    mapCtorString = toSource(Map),
+    promiseCtorString = toSource(Promise),
+    setCtorString = toSource(Set),
+    weakMapCtorString = toSource(WeakMap);
+
+/**
+ * Creates an array of the enumerable property names of the array-like `value`.
+ *
+ * @private
+ * @param {*} value The value to query.
+ * @param {boolean} inherited Specify returning inherited property names.
+ * @returns {Array} Returns the array of property names.
+ */
+function arrayLikeKeys(value, inherited) {
+  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
+  // Safari 9 makes `arguments.length` enumerable in strict mode.
+  var result = (isArray(value) || isArguments(value))
+    ? baseTimes(value.length, String)
+    : [];
+
+  var length = result.length,
+      skipIndexes = !!length;
+
+  for (var key in value) {
+    if ((inherited || hasOwnProperty.call(value, key)) &&
+        !(skipIndexes && (key == 'length' || isIndex(key, length)))) {
+      result.push(key);
+    }
+  }
+  return result;
+}
+
+/**
+ * The base implementation of `getTag`.
+ *
+ * @private
+ * @param {*} value The value to query.
+ * @returns {string} Returns the `toStringTag`.
+ */
+function baseGetTag(value) {
+  return objectToString.call(value);
+}
+
+/**
+ * The base implementation of `_.isNative` without bad shim checks.
+ *
+ * @private
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a native function,
+ *  else `false`.
+ */
+function baseIsNative(value) {
+  if (!isObject(value) || isMasked(value)) {
+    return false;
+  }
+  var pattern = (isFunction(value) || isHostObject(value)) ? reIsNative : reIsHostCtor;
+  return pattern.test(toSource(value));
+}
+
+/**
+ * The base implementation of `_.keys` which doesn't treat sparse arrays as dense.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @returns {Array} Returns the array of property names.
+ */
+function baseKeys(object) {
+  if (!isPrototype(object)) {
+    return nativeKeys(object);
+  }
+  var result = [];
+  for (var key in Object(object)) {
+    if (hasOwnProperty.call(object, key) && key != 'constructor') {
+      result.push(key);
+    }
+  }
+  return result;
+}
+
+/**
+ * Copies the values of `source` to `array`.
+ *
+ * @private
+ * @param {Array} source The array to copy values from.
+ * @param {Array} [array=[]] The array to copy values to.
+ * @returns {Array} Returns `array`.
+ */
+function copyArray(source, array) {
+  var index = -1,
+      length = source.length;
+
+  array || (array = Array(length));
+  while (++index < length) {
+    array[index] = source[index];
+  }
+  return array;
+}
+
+/**
+ * Gets the native function at `key` of `object`.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @param {string} key The key of the method to get.
+ * @returns {*} Returns the function if it's native, else `undefined`.
+ */
+function getNative(object, key) {
+  var value = getValue(object, key);
+  return baseIsNative(value) ? value : undefined;
+}
+
+/**
+ * Gets the `toStringTag` of `value`.
+ *
+ * @private
+ * @param {*} value The value to query.
+ * @returns {string} Returns the `toStringTag`.
+ */
+var getTag = baseGetTag;
+
+// Fallback for data views, maps, sets, and weak maps in IE 11,
+// for data views in Edge < 14, and promises in Node.js.
+if ((DataView && getTag(new DataView(new ArrayBuffer(1))) != dataViewTag) ||
+    (Map && getTag(new Map) != mapTag) ||
+    (Promise && getTag(Promise.resolve()) != promiseTag) ||
+    (Set && getTag(new Set) != setTag) ||
+    (WeakMap && getTag(new WeakMap) != weakMapTag)) {
+  getTag = function(value) {
+    var result = objectToString.call(value),
+        Ctor = result == objectTag ? value.constructor : undefined,
+        ctorString = Ctor ? toSource(Ctor) : undefined;
+
+    if (ctorString) {
+      switch (ctorString) {
+        case dataViewCtorString: return dataViewTag;
+        case mapCtorString: return mapTag;
+        case promiseCtorString: return promiseTag;
+        case setCtorString: return setTag;
+        case weakMapCtorString: return weakMapTag;
+      }
+    }
+    return result;
+  };
+}
+
+/**
+ * Checks if `value` is a valid array-like index.
+ *
+ * @private
+ * @param {*} value The value to check.
+ * @param {number} [length=MAX_SAFE_INTEGER] The upper bounds of a valid index.
+ * @returns {boolean} Returns `true` if `value` is a valid index, else `false`.
+ */
+function isIndex(value, length) {
+  length = length == null ? MAX_SAFE_INTEGER : length;
+  return !!length &&
+    (typeof value == 'number' || reIsUint.test(value)) &&
+    (value > -1 && value % 1 == 0 && value < length);
+}
+
+/**
+ * Checks if `func` has its source masked.
+ *
+ * @private
+ * @param {Function} func The function to check.
+ * @returns {boolean} Returns `true` if `func` is masked, else `false`.
+ */
+function isMasked(func) {
+  return !!maskSrcKey && (maskSrcKey in func);
+}
+
+/**
+ * Checks if `value` is likely a prototype object.
+ *
+ * @private
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a prototype, else `false`.
+ */
+function isPrototype(value) {
+  var Ctor = value && value.constructor,
+      proto = (typeof Ctor == 'function' && Ctor.prototype) || objectProto;
+
+  return value === proto;
+}
+
+/**
+ * Converts `func` to its source code.
+ *
+ * @private
+ * @param {Function} func The function to process.
+ * @returns {string} Returns the source code.
+ */
+function toSource(func) {
+  if (func != null) {
+    try {
+      return funcToString.call(func);
+    } catch (e) {}
+    try {
+      return (func + '');
+    } catch (e) {}
+  }
+  return '';
+}
+
+/**
+ * Checks if `value` is likely an `arguments` object.
+ *
+ * @static
+ * @memberOf _
+ * @since 0.1.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is an `arguments` object,
+ *  else `false`.
+ * @example
+ *
+ * _.isArguments(function() { return arguments; }());
+ * // => true
+ *
+ * _.isArguments([1, 2, 3]);
+ * // => false
+ */
+function isArguments(value) {
+  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
+  return isArrayLikeObject(value) && hasOwnProperty.call(value, 'callee') &&
+    (!propertyIsEnumerable.call(value, 'callee') || objectToString.call(value) == argsTag);
+}
+
+/**
+ * Checks if `value` is classified as an `Array` object.
+ *
+ * @static
+ * @memberOf _
+ * @since 0.1.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is an array, else `false`.
+ * @example
+ *
+ * _.isArray([1, 2, 3]);
+ * // => true
+ *
+ * _.isArray(document.body.children);
+ * // => false
+ *
+ * _.isArray('abc');
+ * // => false
+ *
+ * _.isArray(_.noop);
+ * // => false
+ */
+var isArray = Array.isArray;
+
+/**
+ * Checks if `value` is array-like. A value is considered array-like if it's
+ * not a function and has a `value.length` that's an integer greater than or
+ * equal to `0` and less than or equal to `Number.MAX_SAFE_INTEGER`.
+ *
+ * @static
+ * @memberOf _
+ * @since 4.0.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is array-like, else `false`.
+ * @example
+ *
+ * _.isArrayLike([1, 2, 3]);
+ * // => true
+ *
+ * _.isArrayLike(document.body.children);
+ * // => true
+ *
+ * _.isArrayLike('abc');
+ * // => true
+ *
+ * _.isArrayLike(_.noop);
+ * // => false
+ */
+function isArrayLike(value) {
+  return value != null && isLength(value.length) && !isFunction(value);
+}
+
+/**
+ * This method is like `_.isArrayLike` except that it also checks if `value`
+ * is an object.
+ *
+ * @static
+ * @memberOf _
+ * @since 4.0.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is an array-like object,
+ *  else `false`.
+ * @example
+ *
+ * _.isArrayLikeObject([1, 2, 3]);
+ * // => true
+ *
+ * _.isArrayLikeObject(document.body.children);
+ * // => true
+ *
+ * _.isArrayLikeObject('abc');
+ * // => false
+ *
+ * _.isArrayLikeObject(_.noop);
+ * // => false
+ */
+function isArrayLikeObject(value) {
+  return isObjectLike(value) && isArrayLike(value);
+}
+
+/**
+ * Checks if `value` is classified as a `Function` object.
+ *
+ * @static
+ * @memberOf _
+ * @since 0.1.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a function, else `false`.
+ * @example
+ *
+ * _.isFunction(_);
+ * // => true
+ *
+ * _.isFunction(/abc/);
+ * // => false
+ */
+function isFunction(value) {
+  // The use of `Object#toString` avoids issues with the `typeof` operator
+  // in Safari 8-9 which returns 'object' for typed array and other constructors.
+  var tag = isObject(value) ? objectToString.call(value) : '';
+  return tag == funcTag || tag == genTag;
+}
+
+/**
+ * Checks if `value` is a valid array-like length.
+ *
+ * **Note:** This method is loosely based on
+ * [`ToLength`](http://ecma-international.org/ecma-262/7.0/#sec-tolength).
+ *
+ * @static
+ * @memberOf _
+ * @since 4.0.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a valid length, else `false`.
+ * @example
+ *
+ * _.isLength(3);
+ * // => true
+ *
+ * _.isLength(Number.MIN_VALUE);
+ * // => false
+ *
+ * _.isLength(Infinity);
+ * // => false
+ *
+ * _.isLength('3');
+ * // => false
+ */
+function isLength(value) {
+  return typeof value == 'number' &&
+    value > -1 && value % 1 == 0 && value <= MAX_SAFE_INTEGER;
+}
+
+/**
+ * Checks if `value` is the
+ * [language type](http://www.ecma-international.org/ecma-262/7.0/#sec-ecmascript-language-types)
+ * of `Object`. (e.g. arrays, functions, objects, regexes, `new Number(0)`, and `new String('')`)
+ *
+ * @static
+ * @memberOf _
+ * @since 0.1.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is an object, else `false`.
+ * @example
+ *
+ * _.isObject({});
+ * // => true
+ *
+ * _.isObject([1, 2, 3]);
+ * // => true
+ *
+ * _.isObject(_.noop);
+ * // => true
+ *
+ * _.isObject(null);
+ * // => false
+ */
+function isObject(value) {
+  var type = typeof value;
+  return !!value && (type == 'object' || type == 'function');
+}
+
+/**
+ * Checks if `value` is object-like. A value is object-like if it's not `null`
+ * and has a `typeof` result of "object".
+ *
+ * @static
+ * @memberOf _
+ * @since 4.0.0
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is object-like, else `false`.
+ * @example
+ *
+ * _.isObjectLike({});
+ * // => true
+ *
+ * _.isObjectLike([1, 2, 3]);
+ * // => true
+ *
+ * _.isObjectLike(_.noop);
+ * // => false
+ *
+ * _.isObjectLike(null);
+ * // => false
+ */
+function isObjectLike(value) {
+  return !!value && typeof value == 'object';
+}
+
+/**
+ * Checks if `value` is classified as a `String` primitive or object.
+ *
+ * @static
+ * @since 0.1.0
+ * @memberOf _
+ * @category Lang
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is a string, else `false`.
+ * @example
+ *
+ * _.isString('abc');
+ * // => true
+ *
+ * _.isString(1);
+ * // => false
+ */
+function isString(value) {
+  return typeof value == 'string' ||
+    (!isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag);
+}
+
+/**
+ * Converts `value` to an array.
+ *
+ * @static
+ * @since 0.1.0
+ * @memberOf _
+ * @category Lang
+ * @param {*} value The value to convert.
+ * @returns {Array} Returns the converted array.
+ * @example
+ *
+ * _.toArray({ 'a': 1, 'b': 2 });
+ * // => [1, 2]
+ *
+ * _.toArray('abc');
+ * // => ['a', 'b', 'c']
+ *
+ * _.toArray(1);
+ * // => []
+ *
+ * _.toArray(null);
+ * // => []
+ */
+function toArray(value) {
+  if (!value) {
+    return [];
+  }
+  if (isArrayLike(value)) {
+    return isString(value) ? stringToArray(value) : copyArray(value);
+  }
+  if (iteratorSymbol && value[iteratorSymbol]) {
+    return iteratorToArray(value[iteratorSymbol]());
+  }
+  var tag = getTag(value),
+      func = tag == mapTag ? mapToArray : (tag == setTag ? setToArray : values);
+
+  return func(value);
+}
+
+/**
+ * Creates an array of the own enumerable property names of `object`.
+ *
+ * **Note:** Non-object values are coerced to objects. See the
+ * [ES spec](http://ecma-international.org/ecma-262/7.0/#sec-object.keys)
+ * for more details.
+ *
+ * @static
+ * @since 0.1.0
+ * @memberOf _
+ * @category Object
+ * @param {Object} object The object to query.
+ * @returns {Array} Returns the array of property names.
+ * @example
+ *
+ * function Foo() {
+ *   this.a = 1;
+ *   this.b = 2;
+ * }
+ *
+ * Foo.prototype.c = 3;
+ *
+ * _.keys(new Foo);
+ * // => ['a', 'b'] (iteration order is not guaranteed)
+ *
+ * _.keys('hi');
+ * // => ['0', '1']
+ */
+function keys(object) {
+  return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
+}
+
+/**
+ * Creates an array of the own enumerable string keyed property values of `object`.
+ *
+ * **Note:** Non-object values are coerced to objects.
+ *
+ * @static
+ * @since 0.1.0
+ * @memberOf _
+ * @category Object
+ * @param {Object} object The object to query.
+ * @returns {Array} Returns the array of property values.
+ * @example
+ *
+ * function Foo() {
+ *   this.a = 1;
+ *   this.b = 2;
+ * }
+ *
+ * Foo.prototype.c = 3;
+ *
+ * _.values(new Foo);
+ * // => [1, 2] (iteration order is not guaranteed)
+ *
+ * _.values('hi');
+ * // => ['h', 'i']
+ */
+function values(object) {
+  return object ? baseValues(object, keys(object)) : [];
+}
+
+module.exports = toArray;
+
+
+/***/ }),
+/* 237 */,
+/* 238 */,
+/* 239 */,
+/* 240 */,
+/* 241 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// A bit simpler than readable streams.
+// Implement an async ._write(chunk, encoding, cb), and it'll handle all
+// the drain event emission and buffering.
+
+
+
+/*<replacement>*/
+
+var pna = __webpack_require__(334);
+/*</replacement>*/
+
+module.exports = Writable;
+
+/* <replacement> */
+function WriteReq(chunk, encoding, cb) {
+  this.chunk = chunk;
+  this.encoding = encoding;
+  this.callback = cb;
+  this.next = null;
+}
+
+// It seems a linked list but it is not
+// there will be only 2 of these for each stream
+function CorkedRequest(state) {
+  var _this = this;
+
+  this.next = null;
+  this.entry = null;
+  this.finish = function () {
+    onCorkedFinish(_this, state);
+  };
+}
+/* </replacement> */
+
+/*<replacement>*/
+var asyncWrite = !process.browser && ['v0.10', 'v0.9.'].indexOf(process.version.slice(0, 5)) > -1 ? setImmediate : pna.nextTick;
+/*</replacement>*/
+
+/*<replacement>*/
+var Duplex;
+/*</replacement>*/
+
+Writable.WritableState = WritableState;
+
+/*<replacement>*/
+var util = Object.create(__webpack_require__(286));
+util.inherits = __webpack_require__(689);
+/*</replacement>*/
+
+/*<replacement>*/
+var internalUtil = {
+  deprecate: __webpack_require__(562)
+};
+/*</replacement>*/
+
+/*<replacement>*/
+var Stream = __webpack_require__(427);
+/*</replacement>*/
+
+/*<replacement>*/
+
+var Buffer = __webpack_require__(149).Buffer;
+var OurUint8Array = global.Uint8Array || function () {};
+function _uint8ArrayToBuffer(chunk) {
+  return Buffer.from(chunk);
+}
+function _isUint8Array(obj) {
+  return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
+}
+
+/*</replacement>*/
+
+var destroyImpl = __webpack_require__(232);
+
+util.inherits(Writable, Stream);
+
+function nop() {}
+
+function WritableState(options, stream) {
+  Duplex = Duplex || __webpack_require__(831);
+
+  options = options || {};
+
+  // Duplex streams are both readable and writable, but share
+  // the same options object.
+  // However, some cases require setting options to different
+  // values for the readable and the writable sides of the duplex stream.
+  // These options can be provided separately as readableXXX and writableXXX.
+  var isDuplex = stream instanceof Duplex;
+
+  // object stream flag to indicate whether or not this stream
+  // contains buffers or objects.
+  this.objectMode = !!options.objectMode;
+
+  if (isDuplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
+
+  // the point at which write() starts returning false
+  // Note: 0 is a valid value, means that we always return false if
+  // the entire buffer is not flushed immediately on write()
+  var hwm = options.highWaterMark;
+  var writableHwm = options.writableHighWaterMark;
+  var defaultHwm = this.objectMode ? 16 : 16 * 1024;
+
+  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (writableHwm || writableHwm === 0)) this.highWaterMark = writableHwm;else this.highWaterMark = defaultHwm;
+
+  // cast to ints.
+  this.highWaterMark = Math.floor(this.highWaterMark);
+
+  // if _final has been called
+  this.finalCalled = false;
+
+  // drain event flag.
+  this.needDrain = false;
+  // at the start of calling end()
+  this.ending = false;
+  // when end() has been called, and returned
+  this.ended = false;
+  // when 'finish' is emitted
+  this.finished = false;
+
+  // has it been destroyed
+  this.destroyed = false;
+
+  // should we decode strings into buffers before passing to _write?
+  // this is here so that some node-core streams can optimize string
+  // handling at a lower level.
+  var noDecode = options.decodeStrings === false;
+  this.decodeStrings = !noDecode;
+
+  // Crypto is kind of old and crusty.  Historically, its default string
+  // encoding is 'binary' so we have to make this configurable.
+  // Everything else in the universe uses 'utf8', though.
+  this.defaultEncoding = options.defaultEncoding || 'utf8';
+
+  // not an actual buffer we keep track of, but a measurement
+  // of how much we're waiting to get pushed to some underlying
+  // socket or file.
+  this.length = 0;
+
+  // a flag to see when we're in the middle of a write.
+  this.writing = false;
+
+  // when true all writes will be buffered until .uncork() call
+  this.corked = 0;
+
+  // a flag to be able to tell if the onwrite cb is called immediately,
+  // or on a later tick.  We set this to true at first, because any
+  // actions that shouldn't happen until "later" should generally also
+  // not happen before the first write call.
+  this.sync = true;
+
+  // a flag to know if we're processing previously buffered items, which
+  // may call the _write() callback in the same tick, so that we don't
+  // end up in an overlapped onwrite situation.
+  this.bufferProcessing = false;
+
+  // the callback that's passed to _write(chunk,cb)
+  this.onwrite = function (er) {
+    onwrite(stream, er);
+  };
+
+  // the callback that the user supplies to write(chunk,encoding,cb)
+  this.writecb = null;
+
+  // the amount that is being written when _write is called.
+  this.writelen = 0;
+
+  this.bufferedRequest = null;
+  this.lastBufferedRequest = null;
+
+  // number of pending user-supplied write callbacks
+  // this must be 0 before 'finish' can be emitted
+  this.pendingcb = 0;
+
+  // emit prefinish if the only thing we're waiting for is _write cbs
+  // This is relevant for synchronous Transform streams
+  this.prefinished = false;
+
+  // True if the error was already emitted and should not be thrown again
+  this.errorEmitted = false;
+
+  // count buffered requests
+  this.bufferedRequestCount = 0;
+
+  // allocate the first CorkedRequest, there is always
+  // one allocated and free to use, and we maintain at most two
+  this.corkedRequestsFree = new CorkedRequest(this);
+}
+
+WritableState.prototype.getBuffer = function getBuffer() {
+  var current = this.bufferedRequest;
+  var out = [];
+  while (current) {
+    out.push(current);
+    current = current.next;
+  }
+  return out;
+};
+
+(function () {
+  try {
+    Object.defineProperty(WritableState.prototype, 'buffer', {
+      get: internalUtil.deprecate(function () {
+        return this.getBuffer();
+      }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' + 'instead.', 'DEP0003')
+    });
+  } catch (_) {}
+})();
+
+// Test _writableState for inheritance to account for Duplex streams,
+// whose prototype chain only points to Readable.
+var realHasInstance;
+if (typeof Symbol === 'function' && Symbol.hasInstance && typeof Function.prototype[Symbol.hasInstance] === 'function') {
+  realHasInstance = Function.prototype[Symbol.hasInstance];
+  Object.defineProperty(Writable, Symbol.hasInstance, {
+    value: function (object) {
+      if (realHasInstance.call(this, object)) return true;
+      if (this !== Writable) return false;
+
+      return object && object._writableState instanceof WritableState;
+    }
+  });
+} else {
+  realHasInstance = function (object) {
+    return object instanceof this;
+  };
+}
+
+function Writable(options) {
+  Duplex = Duplex || __webpack_require__(831);
+
+  // Writable ctor is applied to Duplexes, too.
+  // `realHasInstance` is necessary because using plain `instanceof`
+  // would return false, as no `_writableState` property is attached.
+
+  // Trying to use the custom `instanceof` for Writable here will also break the
+  // Node.js LazyTransform implementation, which has a non-trivial getter for
+  // `_writableState` that would lead to infinite recursion.
+  if (!realHasInstance.call(Writable, this) && !(this instanceof Duplex)) {
+    return new Writable(options);
+  }
+
+  this._writableState = new WritableState(options, this);
+
+  // legacy.
+  this.writable = true;
+
+  if (options) {
+    if (typeof options.write === 'function') this._write = options.write;
+
+    if (typeof options.writev === 'function') this._writev = options.writev;
+
+    if (typeof options.destroy === 'function') this._destroy = options.destroy;
+
+    if (typeof options.final === 'function') this._final = options.final;
+  }
+
+  Stream.call(this);
+}
+
+// Otherwise people can pipe Writable streams, which is just wrong.
+Writable.prototype.pipe = function () {
+  this.emit('error', new Error('Cannot pipe, not readable'));
+};
+
+function writeAfterEnd(stream, cb) {
+  var er = new Error('write after end');
+  // TODO: defer error events consistently everywhere, not just the cb
+  stream.emit('error', er);
+  pna.nextTick(cb, er);
+}
+
+// Checks that a user-supplied chunk is valid, especially for the particular
+// mode the stream is in. Currently this means that `null` is never accepted
+// and undefined/non-string values are only allowed in object mode.
+function validChunk(stream, state, chunk, cb) {
+  var valid = true;
+  var er = false;
+
+  if (chunk === null) {
+    er = new TypeError('May not write null values to stream');
+  } else if (typeof chunk !== 'string' && chunk !== undefined && !state.objectMode) {
+    er = new TypeError('Invalid non-string/buffer chunk');
+  }
+  if (er) {
+    stream.emit('error', er);
+    pna.nextTick(cb, er);
+    valid = false;
+  }
+  return valid;
+}
+
+Writable.prototype.write = function (chunk, encoding, cb) {
+  var state = this._writableState;
+  var ret = false;
+  var isBuf = !state.objectMode && _isUint8Array(chunk);
+
+  if (isBuf && !Buffer.isBuffer(chunk)) {
+    chunk = _uint8ArrayToBuffer(chunk);
+  }
+
+  if (typeof encoding === 'function') {
+    cb = encoding;
+    encoding = null;
+  }
+
+  if (isBuf) encoding = 'buffer';else if (!encoding) encoding = state.defaultEncoding;
+
+  if (typeof cb !== 'function') cb = nop;
+
+  if (state.ended) writeAfterEnd(this, cb);else if (isBuf || validChunk(this, state, chunk, cb)) {
+    state.pendingcb++;
+    ret = writeOrBuffer(this, state, isBuf, chunk, encoding, cb);
+  }
+
+  return ret;
+};
+
+Writable.prototype.cork = function () {
+  var state = this._writableState;
+
+  state.corked++;
+};
+
+Writable.prototype.uncork = function () {
+  var state = this._writableState;
+
+  if (state.corked) {
+    state.corked--;
+
+    if (!state.writing && !state.corked && !state.finished && !state.bufferProcessing && state.bufferedRequest) clearBuffer(this, state);
+  }
+};
+
+Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
+  // node::ParseEncoding() requires lower case.
+  if (typeof encoding === 'string') encoding = encoding.toLowerCase();
+  if (!(['hex', 'utf8', 'utf-8', 'ascii', 'binary', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le', 'raw'].indexOf((encoding + '').toLowerCase()) > -1)) throw new TypeError('Unknown encoding: ' + encoding);
+  this._writableState.defaultEncoding = encoding;
+  return this;
+};
+
+function decodeChunk(state, chunk, encoding) {
+  if (!state.objectMode && state.decodeStrings !== false && typeof chunk === 'string') {
+    chunk = Buffer.from(chunk, encoding);
+  }
+  return chunk;
+}
+
+Object.defineProperty(Writable.prototype, 'writableHighWaterMark', {
+  // making it explicit this property is not enumerable
+  // because otherwise some prototype manipulation in
+  // userland will fail
+  enumerable: false,
+  get: function () {
+    return this._writableState.highWaterMark;
+  }
+});
+
+// if we're already writing something, then just put this
+// in the queue, and wait our turn.  Otherwise, call _write
+// If we return false, then we need a drain event, so set that flag.
+function writeOrBuffer(stream, state, isBuf, chunk, encoding, cb) {
+  if (!isBuf) {
+    var newChunk = decodeChunk(state, chunk, encoding);
+    if (chunk !== newChunk) {
+      isBuf = true;
+      encoding = 'buffer';
+      chunk = newChunk;
+    }
+  }
+  var len = state.objectMode ? 1 : chunk.length;
+
+  state.length += len;
+
+  var ret = state.length < state.highWaterMark;
+  // we must ensure that previous needDrain will not be reset to false.
+  if (!ret) state.needDrain = true;
+
+  if (state.writing || state.corked) {
+    var last = state.lastBufferedRequest;
+    state.lastBufferedRequest = {
+      chunk: chunk,
+      encoding: encoding,
+      isBuf: isBuf,
+      callback: cb,
+      next: null
+    };
+    if (last) {
+      last.next = state.lastBufferedRequest;
+    } else {
+      state.bufferedRequest = state.lastBufferedRequest;
+    }
+    state.bufferedRequestCount += 1;
+  } else {
+    doWrite(stream, state, false, len, chunk, encoding, cb);
+  }
+
+  return ret;
+}
+
+function doWrite(stream, state, writev, len, chunk, encoding, cb) {
+  state.writelen = len;
+  state.writecb = cb;
+  state.writing = true;
+  state.sync = true;
+  if (writev) stream._writev(chunk, state.onwrite);else stream._write(chunk, encoding, state.onwrite);
+  state.sync = false;
+}
+
+function onwriteError(stream, state, sync, er, cb) {
+  --state.pendingcb;
+
+  if (sync) {
+    // defer the callback if we are being called synchronously
+    // to avoid piling up things on the stack
+    pna.nextTick(cb, er);
+    // this can emit finish, and it will always happen
+    // after error
+    pna.nextTick(finishMaybe, stream, state);
+    stream._writableState.errorEmitted = true;
+    stream.emit('error', er);
+  } else {
+    // the caller expect this to happen before if
+    // it is async
+    cb(er);
+    stream._writableState.errorEmitted = true;
+    stream.emit('error', er);
+    // this can emit finish, but finish must
+    // always follow error
+    finishMaybe(stream, state);
+  }
+}
+
+function onwriteStateUpdate(state) {
+  state.writing = false;
+  state.writecb = null;
+  state.length -= state.writelen;
+  state.writelen = 0;
+}
+
+function onwrite(stream, er) {
+  var state = stream._writableState;
+  var sync = state.sync;
+  var cb = state.writecb;
+
+  onwriteStateUpdate(state);
+
+  if (er) onwriteError(stream, state, sync, er, cb);else {
+    // Check if we're actually ready to finish, but don't emit yet
+    var finished = needFinish(state);
+
+    if (!finished && !state.corked && !state.bufferProcessing && state.bufferedRequest) {
+      clearBuffer(stream, state);
+    }
+
+    if (sync) {
+      /*<replacement>*/
+      asyncWrite(afterWrite, stream, state, finished, cb);
+      /*</replacement>*/
+    } else {
+      afterWrite(stream, state, finished, cb);
+    }
+  }
+}
+
+function afterWrite(stream, state, finished, cb) {
+  if (!finished) onwriteDrain(stream, state);
+  state.pendingcb--;
+  cb();
+  finishMaybe(stream, state);
+}
+
+// Must force callback to be called on nextTick, so that we don't
+// emit 'drain' before the write() consumer gets the 'false' return
+// value, and has a chance to attach a 'drain' listener.
+function onwriteDrain(stream, state) {
+  if (state.length === 0 && state.needDrain) {
+    state.needDrain = false;
+    stream.emit('drain');
+  }
+}
+
+// if there's something in the buffer waiting, then process it
+function clearBuffer(stream, state) {
+  state.bufferProcessing = true;
+  var entry = state.bufferedRequest;
+
+  if (stream._writev && entry && entry.next) {
+    // Fast case, write everything using _writev()
+    var l = state.bufferedRequestCount;
+    var buffer = new Array(l);
+    var holder = state.corkedRequestsFree;
+    holder.entry = entry;
+
+    var count = 0;
+    var allBuffers = true;
+    while (entry) {
+      buffer[count] = entry;
+      if (!entry.isBuf) allBuffers = false;
+      entry = entry.next;
+      count += 1;
+    }
+    buffer.allBuffers = allBuffers;
+
+    doWrite(stream, state, true, state.length, buffer, '', holder.finish);
+
+    // doWrite is almost always async, defer these to save a bit of time
+    // as the hot path ends with doWrite
+    state.pendingcb++;
+    state.lastBufferedRequest = null;
+    if (holder.next) {
+      state.corkedRequestsFree = holder.next;
+      holder.next = null;
+    } else {
+      state.corkedRequestsFree = new CorkedRequest(state);
+    }
+    state.bufferedRequestCount = 0;
+  } else {
+    // Slow case, write chunks one-by-one
+    while (entry) {
+      var chunk = entry.chunk;
+      var encoding = entry.encoding;
+      var cb = entry.callback;
+      var len = state.objectMode ? 1 : chunk.length;
+
+      doWrite(stream, state, false, len, chunk, encoding, cb);
+      entry = entry.next;
+      state.bufferedRequestCount--;
+      // if we didn't call the onwrite immediately, then
+      // it means that we need to wait until it does.
+      // also, that means that the chunk and cb are currently
+      // being processed, so move the buffer counter past them.
+      if (state.writing) {
+        break;
+      }
+    }
+
+    if (entry === null) state.lastBufferedRequest = null;
+  }
+
+  state.bufferedRequest = entry;
+  state.bufferProcessing = false;
+}
+
+Writable.prototype._write = function (chunk, encoding, cb) {
+  cb(new Error('_write() is not implemented'));
+};
+
+Writable.prototype._writev = null;
+
+Writable.prototype.end = function (chunk, encoding, cb) {
+  var state = this._writableState;
+
+  if (typeof chunk === 'function') {
+    cb = chunk;
+    chunk = null;
+    encoding = null;
+  } else if (typeof encoding === 'function') {
+    cb = encoding;
+    encoding = null;
+  }
+
+  if (chunk !== null && chunk !== undefined) this.write(chunk, encoding);
+
+  // .end() fully uncorks
+  if (state.corked) {
+    state.corked = 1;
+    this.uncork();
+  }
+
+  // ignore unnecessary end() calls.
+  if (!state.ending && !state.finished) endWritable(this, state, cb);
+};
+
+function needFinish(state) {
+  return state.ending && state.length === 0 && state.bufferedRequest === null && !state.finished && !state.writing;
+}
+function callFinal(stream, state) {
+  stream._final(function (err) {
+    state.pendingcb--;
+    if (err) {
+      stream.emit('error', err);
+    }
+    state.prefinished = true;
+    stream.emit('prefinish');
+    finishMaybe(stream, state);
+  });
+}
+function prefinish(stream, state) {
+  if (!state.prefinished && !state.finalCalled) {
+    if (typeof stream._final === 'function') {
+      state.pendingcb++;
+      state.finalCalled = true;
+      pna.nextTick(callFinal, stream, state);
+    } else {
+      state.prefinished = true;
+      stream.emit('prefinish');
+    }
+  }
+}
+
+function finishMaybe(stream, state) {
+  var need = needFinish(state);
+  if (need) {
+    prefinish(stream, state);
+    if (state.pendingcb === 0) {
+      state.finished = true;
+      stream.emit('finish');
+    }
+  }
+  return need;
+}
+
+function endWritable(stream, state, cb) {
+  state.ending = true;
+  finishMaybe(stream, state);
+  if (cb) {
+    if (state.finished) pna.nextTick(cb);else stream.once('finish', cb);
+  }
+  state.ended = true;
+  stream.writable = false;
+}
+
+function onCorkedFinish(corkReq, state, err) {
+  var entry = corkReq.entry;
+  corkReq.entry = null;
+  while (entry) {
+    var cb = entry.callback;
+    state.pendingcb--;
+    cb(err);
+    entry = entry.next;
+  }
+  if (state.corkedRequestsFree) {
+    state.corkedRequestsFree.next = corkReq;
+  } else {
+    state.corkedRequestsFree = corkReq;
+  }
+}
+
+Object.defineProperty(Writable.prototype, 'destroyed', {
+  get: function () {
+    if (this._writableState === undefined) {
+      return false;
+    }
+    return this._writableState.destroyed;
+  },
+  set: function (value) {
+    // we ignore the value if the stream
+    // has not been initialized yet
+    if (!this._writableState) {
+      return;
+    }
+
+    // backward compatibility, the user is explicitly
+    // managing destroyed
+    this._writableState.destroyed = value;
+  }
+});
+
+Writable.prototype.destroy = destroyImpl.destroy;
+Writable.prototype._undestroy = destroyImpl.undestroy;
+Writable.prototype._destroy = function (err, cb) {
+  this.end();
+  cb(err);
+};
+
+/***/ }),
+/* 242 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const os = __webpack_require__(87);
+const hasFlag = __webpack_require__(551);
+
+const env = process.env;
+
+let forceColor;
+if (hasFlag('no-color') ||
+	hasFlag('no-colors') ||
+	hasFlag('color=false')) {
+	forceColor = false;
+} else if (hasFlag('color') ||
+	hasFlag('colors') ||
+	hasFlag('color=true') ||
+	hasFlag('color=always')) {
+	forceColor = true;
+}
+if ('FORCE_COLOR' in env) {
+	forceColor = env.FORCE_COLOR.length === 0 || parseInt(env.FORCE_COLOR, 10) !== 0;
+}
+
+function translateLevel(level) {
+	if (level === 0) {
+		return false;
+	}
+
+	return {
+		level,
+		hasBasic: true,
+		has256: level >= 2,
+		has16m: level >= 3
+	};
+}
+
+function supportsColor(stream) {
+	if (forceColor === false) {
+		return 0;
+	}
+
+	if (hasFlag('color=16m') ||
+		hasFlag('color=full') ||
+		hasFlag('color=truecolor')) {
+		return 3;
+	}
+
+	if (hasFlag('color=256')) {
+		return 2;
+	}
+
+	if (stream && !stream.isTTY && forceColor !== true) {
+		return 0;
+	}
+
+	const min = forceColor ? 1 : 0;
+
+	if (process.platform === 'win32') {
+		// Node.js 7.5.0 is the first version of Node.js to include a patch to
+		// libuv that enables 256 color output on Windows. Anything earlier and it
+		// won't work. However, here we target Node.js 8 at minimum as it is an LTS
+		// release, and Node.js 7 is not. Windows 10 build 10586 is the first Windows
+		// release that supports 256 colors. Windows 10 build 14931 is the first release
+		// that supports 16m/TrueColor.
+		const osRelease = os.release().split('.');
+		if (
+			Number(process.versions.node.split('.')[0]) >= 8 &&
+			Number(osRelease[0]) >= 10 &&
+			Number(osRelease[2]) >= 10586
+		) {
+			return Number(osRelease[2]) >= 14931 ? 3 : 2;
+		}
+
+		return 1;
+	}
+
+	if ('CI' in env) {
+		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
+			return 1;
+		}
+
+		return min;
+	}
+
+	if ('TEAMCITY_VERSION' in env) {
+		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+	}
+
+	if (env.COLORTERM === 'truecolor') {
+		return 3;
+	}
+
+	if ('TERM_PROGRAM' in env) {
+		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
+
+		switch (env.TERM_PROGRAM) {
+			case 'iTerm.app':
+				return version >= 3 ? 3 : 2;
+			case 'Apple_Terminal':
+				return 2;
+			// No default
+		}
+	}
+
+	if (/-256(color)?$/i.test(env.TERM)) {
+		return 2;
+	}
+
+	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+		return 1;
+	}
+
+	if ('COLORTERM' in env) {
+		return 1;
+	}
+
+	if (env.TERM === 'dumb') {
+		return min;
+	}
+
+	return min;
+}
+
+function getSupportLevel(stream) {
+	const level = supportsColor(stream);
+	return translateLevel(level);
+}
+
+module.exports = {
+	supportsColor: getSupportLevel,
+	stdout: getSupportLevel(process.stdout),
+	stderr: getSupportLevel(process.stderr)
+};
+
+
+/***/ }),
+/* 243 */,
+/* 244 */,
+/* 245 */,
+/* 246 */,
+/* 247 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const os = __webpack_require__(87);
+const tty = __webpack_require__(867);
+const hasFlag = __webpack_require__(364);
+
+const {env} = process;
+
+let forceColor;
+if (hasFlag('no-color') ||
+	hasFlag('no-colors') ||
+	hasFlag('color=false') ||
+	hasFlag('color=never')) {
+	forceColor = 0;
+} else if (hasFlag('color') ||
+	hasFlag('colors') ||
+	hasFlag('color=true') ||
+	hasFlag('color=always')) {
+	forceColor = 1;
+}
+
+if ('FORCE_COLOR' in env) {
+	if (env.FORCE_COLOR === 'true') {
+		forceColor = 1;
+	} else if (env.FORCE_COLOR === 'false') {
+		forceColor = 0;
+	} else {
+		forceColor = env.FORCE_COLOR.length === 0 ? 1 : Math.min(parseInt(env.FORCE_COLOR, 10), 3);
+	}
+}
+
+function translateLevel(level) {
+	if (level === 0) {
+		return false;
+	}
+
+	return {
+		level,
+		hasBasic: true,
+		has256: level >= 2,
+		has16m: level >= 3
+	};
+}
+
+function supportsColor(haveStream, streamIsTTY) {
+	if (forceColor === 0) {
+		return 0;
+	}
+
+	if (hasFlag('color=16m') ||
+		hasFlag('color=full') ||
+		hasFlag('color=truecolor')) {
+		return 3;
+	}
+
+	if (hasFlag('color=256')) {
+		return 2;
+	}
+
+	if (haveStream && !streamIsTTY && forceColor === undefined) {
+		return 0;
+	}
+
+	const min = forceColor || 0;
+
+	if (env.TERM === 'dumb') {
+		return min;
+	}
+
+	if (process.platform === 'win32') {
+		// Windows 10 build 10586 is the first Windows release that supports 256 colors.
+		// Windows 10 build 14931 is the first release that supports 16m/TrueColor.
+		const osRelease = os.release().split('.');
+		if (
+			Number(osRelease[0]) >= 10 &&
+			Number(osRelease[2]) >= 10586
+		) {
+			return Number(osRelease[2]) >= 14931 ? 3 : 2;
+		}
+
+		return 1;
+	}
+
+	if ('CI' in env) {
+		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI', 'GITHUB_ACTIONS', 'BUILDKITE'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
+			return 1;
+		}
+
+		return min;
+	}
+
+	if ('TEAMCITY_VERSION' in env) {
+		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+	}
+
+	if (env.COLORTERM === 'truecolor') {
+		return 3;
+	}
+
+	if ('TERM_PROGRAM' in env) {
+		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
+
+		switch (env.TERM_PROGRAM) {
+			case 'iTerm.app':
+				return version >= 3 ? 3 : 2;
+			case 'Apple_Terminal':
+				return 2;
+			// No default
+		}
+	}
+
+	if (/-256(color)?$/i.test(env.TERM)) {
+		return 2;
+	}
+
+	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+		return 1;
+	}
+
+	if ('COLORTERM' in env) {
+		return 1;
+	}
+
+	return min;
+}
+
+function getSupportLevel(stream) {
+	const level = supportsColor(stream, stream && stream.isTTY);
+	return translateLevel(level);
+}
+
+module.exports = {
+	supportsColor: getSupportLevel,
+	stdout: translateLevel(supportsColor(true, tty.isatty(1))),
+	stderr: translateLevel(supportsColor(true, tty.isatty(2)))
+};
+
+
+/***/ }),
+/* 248 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const {
+  noopTest,
+  edit,
+  merge
+} = __webpack_require__(345);
+
+/**
+ * Block-Level Grammar
+ */
+const block = {
+  newline: /^(?: *(?:\n|$))+/,
+  code: /^( {4}[^\n]+(?:\n(?: *(?:\n|$))*)?)+/,
+  fences: /^ {0,3}(`{3,}(?=[^`\n]*\n)|~{3,})([^\n]*)\n(?:|([\s\S]*?)\n)(?: {0,3}\1[~`]* *(?:\n+|$)|$)/,
+  hr: /^ {0,3}((?:- *){3,}|(?:_ *){3,}|(?:\* *){3,})(?:\n+|$)/,
+  heading: /^ {0,3}(#{1,6})(?=\s|$)(.*)(?:\n+|$)/,
+  blockquote: /^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/,
+  list: /^( {0,3})(bull) [\s\S]+?(?:hr|def|\n{2,}(?! )(?! {0,3}bull )\n*|\s*$)/,
+  html: '^ {0,3}(?:' // optional indentation
+    + '<(script|pre|style)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)' // (1)
+    + '|comment[^\\n]*(\\n+|$)' // (2)
+    + '|<\\?[\\s\\S]*?(?:\\?>\\n*|$)' // (3)
+    + '|<![A-Z][\\s\\S]*?(?:>\\n*|$)' // (4)
+    + '|<!\\[CDATA\\[[\\s\\S]*?(?:\\]\\]>\\n*|$)' // (5)
+    + '|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:\\n{2,}|$)' // (6)
+    + '|<(?!script|pre|style)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:\\n{2,}|$)' // (7) open tag
+    + '|</(?!script|pre|style)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:\\n{2,}|$)' // (7) closing tag
+    + ')',
+  def: /^ {0,3}\[(label)\]: *\n? *<?([^\s>]+)>?(?:(?: +\n? *| *\n *)(title))? *(?:\n+|$)/,
+  nptable: noopTest,
+  table: noopTest,
+  lheading: /^([^\n]+)\n {0,3}(=+|-+) *(?:\n+|$)/,
+  // regex template, placeholders will be replaced according to different paragraph
+  // interruption rules of commonmark and the original markdown spec:
+  _paragraph: /^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html| +\n)[^\n]+)*)/,
+  text: /^[^\n]+/
+};
+
+block._label = /(?!\s*\])(?:\\[\[\]]|[^\[\]])+/;
+block._title = /(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/;
+block.def = edit(block.def)
+  .replace('label', block._label)
+  .replace('title', block._title)
+  .getRegex();
+
+block.bullet = /(?:[*+-]|\d{1,9}[.)])/;
+block.item = /^( *)(bull) ?[^\n]*(?:\n(?! *bull ?)[^\n]*)*/;
+block.item = edit(block.item, 'gm')
+  .replace(/bull/g, block.bullet)
+  .getRegex();
+
+block.listItemStart = edit(/^( *)(bull) */)
+  .replace('bull', block.bullet)
+  .getRegex();
+
+block.list = edit(block.list)
+  .replace(/bull/g, block.bullet)
+  .replace('hr', '\\n+(?=\\1?(?:(?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$))')
+  .replace('def', '\\n+(?=' + block.def.source + ')')
+  .getRegex();
+
+block._tag = 'address|article|aside|base|basefont|blockquote|body|caption'
+  + '|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption'
+  + '|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe'
+  + '|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option'
+  + '|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr'
+  + '|track|ul';
+block._comment = /<!--(?!-?>)[\s\S]*?(?:-->|$)/;
+block.html = edit(block.html, 'i')
+  .replace('comment', block._comment)
+  .replace('tag', block._tag)
+  .replace('attribute', / +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/)
+  .getRegex();
+
+block.paragraph = edit(block._paragraph)
+  .replace('hr', block.hr)
+  .replace('heading', ' {0,3}#{1,6} ')
+  .replace('|lheading', '') // setex headings don't interrupt commonmark paragraphs
+  .replace('blockquote', ' {0,3}>')
+  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
+  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
+  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
+  .replace('tag', block._tag) // pars can be interrupted by type (6) html blocks
+  .getRegex();
+
+block.blockquote = edit(block.blockquote)
+  .replace('paragraph', block.paragraph)
+  .getRegex();
+
+/**
+ * Normal Block Grammar
+ */
+
+block.normal = merge({}, block);
+
+/**
+ * GFM Block Grammar
+ */
+
+block.gfm = merge({}, block.normal, {
+  nptable: '^ *([^|\\n ].*\\|.*)\\n' // Header
+    + ' {0,3}([-:]+ *\\|[-| :]*)' // Align
+    + '(?:\\n((?:(?!\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)', // Cells
+  table: '^ *\\|(.+)\\n' // Header
+    + ' {0,3}\\|?( *[-:]+[-| :]*)' // Align
+    + '(?:\\n *((?:(?!\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)' // Cells
+});
+
+block.gfm.nptable = edit(block.gfm.nptable)
+  .replace('hr', block.hr)
+  .replace('heading', ' {0,3}#{1,6} ')
+  .replace('blockquote', ' {0,3}>')
+  .replace('code', ' {4}[^\\n]')
+  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
+  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
+  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
+  .replace('tag', block._tag) // tables can be interrupted by type (6) html blocks
+  .getRegex();
+
+block.gfm.table = edit(block.gfm.table)
+  .replace('hr', block.hr)
+  .replace('heading', ' {0,3}#{1,6} ')
+  .replace('blockquote', ' {0,3}>')
+  .replace('code', ' {4}[^\\n]')
+  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
+  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
+  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
+  .replace('tag', block._tag) // tables can be interrupted by type (6) html blocks
+  .getRegex();
+
+/**
+ * Pedantic grammar (original John Gruber's loose markdown specification)
+ */
+
+block.pedantic = merge({}, block.normal, {
+  html: edit(
+    '^ *(?:comment *(?:\\n|\\s*$)'
+    + '|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)' // closed tag
+    + '|<tag(?:"[^"]*"|\'[^\']*\'|\\s[^\'"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))')
+    .replace('comment', block._comment)
+    .replace(/tag/g, '(?!(?:'
+      + 'a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub'
+      + '|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)'
+      + '\\b)\\w+(?!:|[^\\w\\s@]*@)\\b')
+    .getRegex(),
+  def: /^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,
+  heading: /^(#{1,6})(.*)(?:\n+|$)/,
+  fences: noopTest, // fences not supported
+  paragraph: edit(block.normal._paragraph)
+    .replace('hr', block.hr)
+    .replace('heading', ' *#{1,6} *[^\n]')
+    .replace('lheading', block.lheading)
+    .replace('blockquote', ' {0,3}>')
+    .replace('|fences', '')
+    .replace('|list', '')
+    .replace('|html', '')
+    .getRegex()
+});
+
+/**
+ * Inline-Level Grammar
+ */
+const inline = {
+  escape: /^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,
+  autolink: /^<(scheme:[^\s\x00-\x1f<>]*|email)>/,
+  url: noopTest,
+  tag: '^comment'
+    + '|^</[a-zA-Z][\\w:-]*\\s*>' // self-closing tag
+    + '|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>' // open tag
+    + '|^<\\?[\\s\\S]*?\\?>' // processing instruction, e.g. <?php ?>
+    + '|^<![a-zA-Z]+\\s[\\s\\S]*?>' // declaration, e.g. <!DOCTYPE html>
+    + '|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>', // CDATA section
+  link: /^!?\[(label)\]\(\s*(href)(?:\s+(title))?\s*\)/,
+  reflink: /^!?\[(label)\]\[(?!\s*\])((?:\\[\[\]]?|[^\[\]\\])+)\]/,
+  nolink: /^!?\[(?!\s*\])((?:\[[^\[\]]*\]|\\[\[\]]|[^\[\]])*)\](?:\[\])?/,
+  reflinkSearch: 'reflink|nolink(?!\\()',
+  emStrong: {
+    lDelim: /^(?:\*+(?:([punct_])|[^\s*]))|^_+(?:([punct*])|([^\s_]))/,
+    //        (1) and (2) can only be a Right Delimiter. (3) and (4) can only be Left.  (5) and (6) can be either Left or Right.
+    //        () Skip other delimiter (1) #***                (2) a***#, a***                   (3) #***a, ***a                 (4) ***#              (5) #***#                 (6) a***a
+    rDelimAst: /\_\_[^_]*?\*[^_]*?\_\_|[punct_](\*+)(?=[\s]|$)|[^punct*_\s](\*+)(?=[punct_\s]|$)|[punct_\s](\*+)(?=[^punct*_\s])|[\s](\*+)(?=[punct_])|[punct_](\*+)(?=[punct_])|[^punct*_\s](\*+)(?=[^punct*_\s])/,
+    rDelimUnd: /\*\*[^*]*?\_[^*]*?\*\*|[punct*](\_+)(?=[\s]|$)|[^punct*_\s](\_+)(?=[punct*\s]|$)|[punct*\s](\_+)(?=[^punct*_\s])|[\s](\_+)(?=[punct*])|[punct*](\_+)(?=[punct*])/ // ^- Not allowed for _
+  },
+  code: /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,
+  br: /^( {2,}|\\)\n(?!\s*$)/,
+  del: noopTest,
+  text: /^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/,
+  punctuation: /^([\spunctuation])/
+};
+
+// list of punctuation marks from CommonMark spec
+// without * and _ to handle the different emphasis markers * and _
+inline._punctuation = '!"#$%&\'()+\\-.,/:;<=>?@\\[\\]`^{|}~';
+inline.punctuation = edit(inline.punctuation).replace(/punctuation/g, inline._punctuation).getRegex();
+
+// sequences em should skip over [title](link), `code`, <html>
+inline.blockSkip = /\[[^\]]*?\]\([^\)]*?\)|`[^`]*?`|<[^>]*?>/g;
+inline.escapedEmSt = /\\\*|\\_/g;
+
+inline._comment = edit(block._comment).replace('(?:-->|$)', '-->').getRegex();
+
+inline.emStrong.lDelim = edit(inline.emStrong.lDelim)
+  .replace(/punct/g, inline._punctuation)
+  .getRegex();
+
+inline.emStrong.rDelimAst = edit(inline.emStrong.rDelimAst, 'g')
+  .replace(/punct/g, inline._punctuation)
+  .getRegex();
+
+inline.emStrong.rDelimUnd = edit(inline.emStrong.rDelimUnd, 'g')
+  .replace(/punct/g, inline._punctuation)
+  .getRegex();
+
+inline._escapes = /\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/g;
+
+inline._scheme = /[a-zA-Z][a-zA-Z0-9+.-]{1,31}/;
+inline._email = /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/;
+inline.autolink = edit(inline.autolink)
+  .replace('scheme', inline._scheme)
+  .replace('email', inline._email)
+  .getRegex();
+
+inline._attribute = /\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/;
+
+inline.tag = edit(inline.tag)
+  .replace('comment', inline._comment)
+  .replace('attribute', inline._attribute)
+  .getRegex();
+
+inline._label = /(?:\[(?:\\.|[^\[\]\\])*\]|\\.|`[^`]*`|[^\[\]\\`])*?/;
+inline._href = /<(?:\\.|[^\n<>\\])+>|[^\s\x00-\x1f]*/;
+inline._title = /"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/;
+
+inline.link = edit(inline.link)
+  .replace('label', inline._label)
+  .replace('href', inline._href)
+  .replace('title', inline._title)
+  .getRegex();
+
+inline.reflink = edit(inline.reflink)
+  .replace('label', inline._label)
+  .getRegex();
+
+inline.reflinkSearch = edit(inline.reflinkSearch, 'g')
+  .replace('reflink', inline.reflink)
+  .replace('nolink', inline.nolink)
+  .getRegex();
+
+/**
+ * Normal Inline Grammar
+ */
+
+inline.normal = merge({}, inline);
+
+/**
+ * Pedantic Inline Grammar
+ */
+
+inline.pedantic = merge({}, inline.normal, {
+  strong: {
+    start: /^__|\*\*/,
+    middle: /^__(?=\S)([\s\S]*?\S)__(?!_)|^\*\*(?=\S)([\s\S]*?\S)\*\*(?!\*)/,
+    endAst: /\*\*(?!\*)/g,
+    endUnd: /__(?!_)/g
+  },
+  em: {
+    start: /^_|\*/,
+    middle: /^()\*(?=\S)([\s\S]*?\S)\*(?!\*)|^_(?=\S)([\s\S]*?\S)_(?!_)/,
+    endAst: /\*(?!\*)/g,
+    endUnd: /_(?!_)/g
+  },
+  link: edit(/^!?\[(label)\]\((.*?)\)/)
+    .replace('label', inline._label)
+    .getRegex(),
+  reflink: edit(/^!?\[(label)\]\s*\[([^\]]*)\]/)
+    .replace('label', inline._label)
+    .getRegex()
+});
+
+/**
+ * GFM Inline Grammar
+ */
+
+inline.gfm = merge({}, inline.normal, {
+  escape: edit(inline.escape).replace('])', '~|])').getRegex(),
+  _extended_email: /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/,
+  url: /^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/,
+  _backpedal: /(?:[^?!.,:;*_~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_~)]+(?!$))+/,
+  del: /^(~~?)(?=[^\s~])([\s\S]*?[^\s~])\1(?=[^~]|$)/,
+  text: /^([`~]+|[^`~])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|https?:\/\/|ftp:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@))|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@))/
+});
+
+inline.gfm.url = edit(inline.gfm.url, 'i')
+  .replace('email', inline.gfm._extended_email)
+  .getRegex();
+/**
+ * GFM + Line Breaks Inline Grammar
+ */
+
+inline.breaks = merge({}, inline.gfm, {
+  br: edit(inline.br).replace('{2,}', '*').getRegex(),
+  text: edit(inline.gfm.text)
+    .replace('\\b_', '\\b_| {2,}\\n')
+    .replace(/\{2,\}/g, '*')
+    .getRegex()
+});
+
+module.exports = {
+  block,
+  inline
+};
+
+
+/***/ }),
+/* 249 */,
+/* 250 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const {head} = __webpack_require__(394);
+
+// https://wiki.jenkins.io/display/JENKINS/Building+a+software+project
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.JENKINS_URL);
+	},
+	configuration({env, cwd}) {
+		const pr = env.ghprbPullId || env.gitlabMergeRequestId || env.CHANGE_ID;
+		const isPr = Boolean(pr);
+		const localBranch = env.GIT_LOCAL_BRANCH || env.GIT_BRANCH || env.gitlabBranch || env.BRANCH_NAME;
+
+		return {
+			name: 'Jenkins',
+			service: 'jenkins',
+			commit: env.ghprbActualCommit || env.GIT_COMMIT || head({env, cwd}),
+			branch: isPr ? env.ghprbTargetBranch || env.gitlabTargetBranch : localBranch,
+			build: env.BUILD_NUMBER,
+			buildUrl: env.BUILD_URL,
+			root: env.WORKSPACE,
+			pr,
+			isPr,
+			prBranch: isPr ? env.ghprbSourceBranch || env.gitlabSourceBranch || localBranch : undefined,
+		};
+	},
+};
+
+
+/***/ }),
+/* 251 */,
+/* 252 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var isCore = __webpack_require__(884);
+var fs = __webpack_require__(747);
+var path = __webpack_require__(622);
+var caller = __webpack_require__(200);
+var nodeModulesPaths = __webpack_require__(455);
+var normalizeOptions = __webpack_require__(666);
+
+var realpathFS = fs.realpathSync && typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native : fs.realpathSync;
+
+var defaultIsFile = function isFile(file) {
+    try {
+        var stat = fs.statSync(file);
+    } catch (e) {
+        if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return false;
+        throw e;
+    }
+    return stat.isFile() || stat.isFIFO();
+};
+
+var defaultIsDir = function isDirectory(dir) {
+    try {
+        var stat = fs.statSync(dir);
+    } catch (e) {
+        if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return false;
+        throw e;
+    }
+    return stat.isDirectory();
+};
+
+var defaultRealpathSync = function realpathSync(x) {
+    try {
+        return realpathFS(x);
+    } catch (realpathErr) {
+        if (realpathErr.code !== 'ENOENT') {
+            throw realpathErr;
+        }
+    }
+    return x;
+};
+
+var maybeRealpathSync = function maybeRealpathSync(realpathSync, x, opts) {
+    if (opts && opts.preserveSymlinks === false) {
+        return realpathSync(x);
+    }
+    return x;
+};
+
+var defaultReadPackageSync = function defaultReadPackageSync(readFileSync, pkgfile) {
+    var body = readFileSync(pkgfile);
+    try {
+        var pkg = JSON.parse(body);
+        return pkg;
+    } catch (jsonErr) {}
+};
+
+var getPackageCandidates = function getPackageCandidates(x, start, opts) {
+    var dirs = nodeModulesPaths(start, opts, x);
+    for (var i = 0; i < dirs.length; i++) {
+        dirs[i] = path.join(dirs[i], x);
+    }
+    return dirs;
+};
+
+module.exports = function resolveSync(x, options) {
+    if (typeof x !== 'string') {
+        throw new TypeError('Path must be a string.');
+    }
+    var opts = normalizeOptions(x, options);
+
+    var isFile = opts.isFile || defaultIsFile;
+    var readFileSync = opts.readFileSync || fs.readFileSync;
+    var isDirectory = opts.isDirectory || defaultIsDir;
+    var realpathSync = opts.realpathSync || defaultRealpathSync;
+    var readPackageSync = opts.readPackageSync || defaultReadPackageSync;
+    if (opts.readFileSync && opts.readPackageSync) {
+        throw new TypeError('`readFileSync` and `readPackageSync` are mutually exclusive.');
+    }
+    var packageIterator = opts.packageIterator;
+
+    var extensions = opts.extensions || ['.js'];
+    var includeCoreModules = opts.includeCoreModules !== false;
+    var basedir = opts.basedir || path.dirname(caller());
+    var parent = opts.filename || basedir;
+
+    opts.paths = opts.paths || [];
+
+    // ensure that `basedir` is an absolute path at this point, resolving against the process' current working directory
+    var absoluteStart = maybeRealpathSync(realpathSync, path.resolve(basedir), opts);
+
+    if ((/^(?:\.\.?(?:\/|$)|\/|([A-Za-z]:)?[/\\])/).test(x)) {
+        var res = path.resolve(absoluteStart, x);
+        if (x === '.' || x === '..' || x.slice(-1) === '/') res += '/';
+        var m = loadAsFileSync(res) || loadAsDirectorySync(res);
+        if (m) return maybeRealpathSync(realpathSync, m, opts);
+    } else if (includeCoreModules && isCore(x)) {
+        return x;
+    } else {
+        var n = loadNodeModulesSync(x, absoluteStart);
+        if (n) return maybeRealpathSync(realpathSync, n, opts);
+    }
+
+    var err = new Error("Cannot find module '" + x + "' from '" + parent + "'");
+    err.code = 'MODULE_NOT_FOUND';
+    throw err;
+
+    function loadAsFileSync(x) {
+        var pkg = loadpkg(path.dirname(x));
+
+        if (pkg && pkg.dir && pkg.pkg && opts.pathFilter) {
+            var rfile = path.relative(pkg.dir, x);
+            var r = opts.pathFilter(pkg.pkg, x, rfile);
+            if (r) {
+                x = path.resolve(pkg.dir, r); // eslint-disable-line no-param-reassign
+            }
+        }
+
+        if (isFile(x)) {
+            return x;
+        }
+
+        for (var i = 0; i < extensions.length; i++) {
+            var file = x + extensions[i];
+            if (isFile(file)) {
+                return file;
+            }
+        }
+    }
+
+    function loadpkg(dir) {
+        if (dir === '' || dir === '/') return;
+        if (process.platform === 'win32' && (/^\w:[/\\]*$/).test(dir)) {
+            return;
+        }
+        if ((/[/\\]node_modules[/\\]*$/).test(dir)) return;
+
+        var pkgfile = path.join(maybeRealpathSync(realpathSync, dir, opts), 'package.json');
+
+        if (!isFile(pkgfile)) {
+            return loadpkg(path.dirname(dir));
+        }
+
+        var pkg = readPackageSync(readFileSync, pkgfile);
+
+        if (pkg && opts.packageFilter) {
+            // v2 will pass pkgfile
+            pkg = opts.packageFilter(pkg, /*pkgfile,*/ dir); // eslint-disable-line spaced-comment
+        }
+
+        return { pkg: pkg, dir: dir };
+    }
+
+    function loadAsDirectorySync(x) {
+        var pkgfile = path.join(maybeRealpathSync(realpathSync, x, opts), '/package.json');
+        if (isFile(pkgfile)) {
+            try {
+                var pkg = readPackageSync(readFileSync, pkgfile);
+            } catch (e) {}
+
+            if (pkg && opts.packageFilter) {
+                // v2 will pass pkgfile
+                pkg = opts.packageFilter(pkg, /*pkgfile,*/ x); // eslint-disable-line spaced-comment
+            }
+
+            if (pkg && pkg.main) {
+                if (typeof pkg.main !== 'string') {
+                    var mainError = new TypeError('package “' + pkg.name + '” `main` must be a string');
+                    mainError.code = 'INVALID_PACKAGE_MAIN';
+                    throw mainError;
+                }
+                if (pkg.main === '.' || pkg.main === './') {
+                    pkg.main = 'index';
+                }
+                try {
+                    var m = loadAsFileSync(path.resolve(x, pkg.main));
+                    if (m) return m;
+                    var n = loadAsDirectorySync(path.resolve(x, pkg.main));
+                    if (n) return n;
+                } catch (e) {}
+            }
+        }
+
+        return loadAsFileSync(path.join(x, '/index'));
+    }
+
+    function loadNodeModulesSync(x, start) {
+        var thunk = function () { return getPackageCandidates(x, start, opts); };
+        var dirs = packageIterator ? packageIterator(x, start, thunk, opts) : thunk();
+
+        for (var i = 0; i < dirs.length; i++) {
+            var dir = dirs[i];
+            if (isDirectory(path.dirname(dir))) {
+                var m = loadAsFileSync(dir);
+                if (m) return m;
+                var n = loadAsDirectorySync(dir);
+                if (n) return n;
+            }
+        }
+    }
+};
+
+
+/***/ }),
+/* 253 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const callsites = () => {
+	const _prepareStackTrace = Error.prepareStackTrace;
+	Error.prepareStackTrace = (_, stack) => stack;
+	const stack = new Error().stack.slice(1);
+	Error.prepareStackTrace = _prepareStackTrace;
+	return stack;
+};
+
+module.exports = callsites;
+// TODO: Remove this for the next major release
+module.exports.default = callsites;
+
+
+/***/ }),
+/* 254 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const figures = __webpack_require__(412);
+
+module.exports = {
+  error: {
+    badge: figures.cross,
+    color: 'red',
+    label: 'error',
+    logLevel: 'error'
+  },
+  fatal: {
+    badge: figures.cross,
+    color: 'red',
+    label: 'fatal',
+    logLevel: 'error'
+  },
+  fav: {
+    badge: figures('❤'),
+    color: 'magenta',
+    label: 'favorite',
+    logLevel: 'info'
+  },
+  info: {
+    badge: figures.info,
+    color: 'blue',
+    label: 'info',
+    logLevel: 'info'
+  },
+  star: {
+    badge: figures.star,
+    color: 'yellow',
+    label: 'star',
+    logLevel: 'info'
+  },
+  success: {
+    badge: figures.tick,
+    color: 'green',
+    label: 'success',
+    logLevel: 'info'
+  },
+  wait: {
+    badge: figures.ellipsis,
+    color: 'blue',
+    label: 'waiting',
+    logLevel: 'info'
+  },
+  warn: {
+    badge: figures.warning,
+    color: 'yellow',
+    label: 'warning',
+    logLevel: 'warn'
+  },
+  complete: {
+    badge: figures.checkboxOn,
+    color: 'cyan',
+    label: 'complete',
+    logLevel: 'info'
+  },
+  pending: {
+    badge: figures.checkboxOff,
+    color: 'magenta',
+    label: 'pending',
+    logLevel: 'info'
+  },
+  note: {
+    badge: figures.bullet,
+    color: 'blue',
+    label: 'note',
+    logLevel: 'info'
+  },
+  start: {
+    badge: figures.play,
+    color: 'green',
+    label: 'start',
+    logLevel: 'info'
+  },
+  pause: {
+    badge: figures.squareSmallFilled,
+    color: 'yellow',
+    label: 'pause',
+    logLevel: 'info'
+  },
+  debug: {
+    badge: figures('⬤'),
+    color: 'red',
+    label: 'debug',
+    logLevel: 'debug'
+  },
+  await: {
+    badge: figures.ellipsis,
+    color: 'blue',
+    label: 'awaiting',
+    logLevel: 'info'
+  },
+  watch: {
+    badge: figures.ellipsis,
+    color: 'yellow',
+    label: 'watching',
+    logLevel: 'info'
+  },
+  log: {
+    badge: '',
+    color: '',
+    label: '',
+    logLevel: 'info'
+  }
+};
+
+
+/***/ }),
+/* 255 */,
+/* 256 */,
+/* 257 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+// https://confluence.jetbrains.com/display/TCD10/Predefined+Build+Parameters
+
+const javaProperties = __webpack_require__(563);
+const {branch} = __webpack_require__(394);
+
+const PROPERTIES_MAPPING = {root: 'teamcity.build.workingDir', branch: 'teamcity.build.branch'};
+
+const safeReadProperties = filePath => {
+	try {
+		return javaProperties.of(filePath);
+	} catch (_) {
+		return undefined;
+	}
+};
+
+const getProperties = ({env, cwd}) => {
+	const buildProperties = env.TEAMCITY_BUILD_PROPERTIES_FILE
+		? safeReadProperties(env.TEAMCITY_BUILD_PROPERTIES_FILE)
+		: undefined;
+	const configFile = buildProperties ? buildProperties.get('teamcity.configuration.properties.file') : undefined;
+	const configProperties = configFile ? safeReadProperties(configFile) : configFile;
+
+	return Object.keys(PROPERTIES_MAPPING).reduce(
+		(result, key) =>
+			Object.assign(result, {
+				[key]:
+					(buildProperties ? buildProperties.get(PROPERTIES_MAPPING[key]) : undefined) ||
+					(configProperties ? configProperties.get(PROPERTIES_MAPPING[key]) : undefined) ||
+					(key === 'branch' ? branch({env, cwd}) : undefined),
+			}),
+		{}
+	);
+};
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.TEAMCITY_VERSION);
+	},
+	configuration({env, cwd}) {
+		return {
+			name: 'TeamCity',
+			service: 'teamcity',
+			commit: env.BUILD_VCS_NUMBER,
+			build: env.BUILD_NUMBER,
+			slug: env.TEAMCITY_BUILDCONF_NAME,
+			...getProperties({env, cwd}),
+		};
+	},
+};
+
+
+/***/ }),
+/* 258 */,
+/* 259 */
+/***/ (function(module) {
+
+// http://docs.shippable.com/ci/env-vars/#stdEnv
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.SHIPPABLE);
+	},
+	configuration({env}) {
+		const pr = env.IS_PULL_REQUEST === 'true' ? env.PULL_REQUEST : undefined;
+		const isPr = Boolean(pr);
+
+		return {
+			name: 'Shippable',
+			service: 'shippable',
+			commit: env.COMMIT,
+			tag: env.GIT_TAG_NAME,
+			build: env.BUILD_NUMBER,
+			buildUrl: env.BUILD_URL,
+			branch: isPr ? env.BASE_BRANCH : env.BRANCH,
+			job: env.JOB_NUMBER,
+			pr,
+			isPr,
+			prBranch: isPr ? env.HEAD_BRANCH : undefined,
+			slug: env.SHIPPABLE_REPO_SLUG,
+			root: env.SHIPPABLE_BUILD_DIR,
+		};
+	},
+};
+
+
+/***/ }),
+/* 260 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.SIGRTMAX=exports.getRealtimeSignals=void 0;
+const getRealtimeSignals=function(){
+const length=SIGRTMAX-SIGRTMIN+1;
+return Array.from({length},getRealtimeSignal);
+};exports.getRealtimeSignals=getRealtimeSignals;
+
+const getRealtimeSignal=function(value,index){
+return{
+name:`SIGRT${index+1}`,
+number:SIGRTMIN+index,
+action:"terminate",
+description:"Application-specific signal (realtime)",
+standard:"posix"};
+
+};
+
+const SIGRTMIN=34;
+const SIGRTMAX=64;exports.SIGRTMAX=SIGRTMAX;
+//# sourceMappingURL=realtime.js.map
+
+/***/ }),
+/* 261 */,
+/* 262 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Context = void 0;
+const fs_1 = __webpack_require__(747);
+const os_1 = __webpack_require__(87);
+class Context {
+    /**
+     * Hydrate the context from the environment
+     */
+    constructor() {
+        this.payload = {};
+        if (process.env.GITHUB_EVENT_PATH) {
+            if (fs_1.existsSync(process.env.GITHUB_EVENT_PATH)) {
+                this.payload = JSON.parse(fs_1.readFileSync(process.env.GITHUB_EVENT_PATH, { encoding: 'utf8' }));
+            }
+            else {
+                const path = process.env.GITHUB_EVENT_PATH;
+                process.stdout.write(`GITHUB_EVENT_PATH ${path} does not exist${os_1.EOL}`);
+            }
+        }
+        this.eventName = process.env.GITHUB_EVENT_NAME;
+        this.sha = process.env.GITHUB_SHA;
+        this.ref = process.env.GITHUB_REF;
+        this.workflow = process.env.GITHUB_WORKFLOW;
+        this.action = process.env.GITHUB_ACTION;
+        this.actor = process.env.GITHUB_ACTOR;
+        this.job = process.env.GITHUB_JOB;
+        this.runNumber = parseInt(process.env.GITHUB_RUN_NUMBER, 10);
+        this.runId = parseInt(process.env.GITHUB_RUN_ID, 10);
+    }
+    get issue() {
+        const payload = this.payload;
+        return Object.assign(Object.assign({}, this.repo), { number: (payload.issue || payload.pull_request || payload).number });
+    }
+    get repo() {
+        if (process.env.GITHUB_REPOSITORY) {
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+            return { owner, repo };
+        }
+        if (this.payload.repository) {
+            return {
+                owner: this.payload.repository.owner.login,
+                repo: this.payload.repository.name
+            };
+        }
+        throw new Error("context.repo requires a GITHUB_REPOSITORY environment variable like 'owner/repo'");
+    }
+}
+exports.Context = Context;
+//# sourceMappingURL=context.js.map
+
+/***/ }),
+/* 263 */,
+/* 264 */
+/***/ (function(module) {
+
+"use strict";
+
+const TEMPLATE_REGEX = /(?:\\(u[a-f\d]{4}|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
+const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
+const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
+const ESCAPE_REGEX = /\\(u[a-f\d]{4}|x[a-f\d]{2}|.)|([^\\])/gi;
+
+const ESCAPES = new Map([
+	['n', '\n'],
+	['r', '\r'],
+	['t', '\t'],
+	['b', '\b'],
+	['f', '\f'],
+	['v', '\v'],
+	['0', '\0'],
+	['\\', '\\'],
+	['e', '\u001B'],
+	['a', '\u0007']
+]);
+
+function unescape(c) {
+	if ((c[0] === 'u' && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
+		return String.fromCharCode(parseInt(c.slice(1), 16));
+	}
+
+	return ESCAPES.get(c) || c;
+}
+
+function parseArguments(name, args) {
+	const results = [];
+	const chunks = args.trim().split(/\s*,\s*/g);
+	let matches;
+
+	for (const chunk of chunks) {
+		if (!isNaN(chunk)) {
+			results.push(Number(chunk));
+		} else if ((matches = chunk.match(STRING_REGEX))) {
+			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, chr) => escape ? unescape(escape) : chr));
+		} else {
+			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
+		}
+	}
+
+	return results;
+}
+
+function parseStyle(style) {
+	STYLE_REGEX.lastIndex = 0;
+
+	const results = [];
+	let matches;
+
+	while ((matches = STYLE_REGEX.exec(style)) !== null) {
+		const name = matches[1];
+
+		if (matches[2]) {
+			const args = parseArguments(name, matches[2]);
+			results.push([name].concat(args));
+		} else {
+			results.push([name]);
+		}
+	}
+
+	return results;
+}
+
+function buildStyle(chalk, styles) {
+	const enabled = {};
+
+	for (const layer of styles) {
+		for (const style of layer.styles) {
+			enabled[style[0]] = layer.inverse ? null : style.slice(1);
+		}
+	}
+
+	let current = chalk;
+	for (const styleName of Object.keys(enabled)) {
+		if (Array.isArray(enabled[styleName])) {
+			if (!(styleName in current)) {
+				throw new Error(`Unknown Chalk style: ${styleName}`);
+			}
+
+			if (enabled[styleName].length > 0) {
+				current = current[styleName].apply(current, enabled[styleName]);
+			} else {
+				current = current[styleName];
+			}
+		}
+	}
+
+	return current;
+}
+
+module.exports = (chalk, tmp) => {
+	const styles = [];
+	const chunks = [];
+	let chunk = [];
+
+	// eslint-disable-next-line max-params
+	tmp.replace(TEMPLATE_REGEX, (m, escapeChar, inverse, style, close, chr) => {
+		if (escapeChar) {
+			chunk.push(unescape(escapeChar));
+		} else if (style) {
+			const str = chunk.join('');
+			chunk = [];
+			chunks.push(styles.length === 0 ? str : buildStyle(chalk, styles)(str));
+			styles.push({inverse, styles: parseStyle(style)});
+		} else if (close) {
+			if (styles.length === 0) {
+				throw new Error('Found extraneous } in Chalk template literal');
+			}
+
+			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
+			chunk = [];
+			styles.pop();
+		} else {
+			chunk.push(chr);
+		}
+	});
+
+	chunks.push(chunk.join(''));
+
+	if (styles.length > 0) {
+		const errMsg = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
+		throw new Error(errMsg);
+	}
+
+	return chunks.join('');
+};
+
+
+/***/ }),
+/* 265 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const Range = __webpack_require__(124)
+const validRange = (range, options) => {
+  try {
+    // Return '*' instead of '' so that truthiness works.
+    // This will throw if it's invalid anyway
+    return new Range(range, options).range || '*'
+  } catch (er) {
+    return null
+  }
+}
+module.exports = validRange
+
+
+/***/ }),
+/* 266 */,
+/* 267 */,
+/* 268 */,
+/* 269 */,
+/* 270 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.cacheWrapper = cacheWrapper;
+exports.cacheWrapperSync = cacheWrapperSync;
+
+async function cacheWrapper(cache, key, fn) {
+  const cached = cache.get(key);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const result = await fn();
+  cache.set(key, result);
+  return result;
+}
+
+function cacheWrapperSync(cache, key, fn) {
+  const cached = cache.get(key);
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const result = fn();
+  cache.set(key, result);
+  return result;
+}
+//# sourceMappingURL=cacheWrapper.js.map
+
+/***/ }),
+/* 271 */,
+/* 272 */,
+/* 273 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const indentString = __webpack_require__(321);
+const cleanStack = __webpack_require__(201);
+
+const cleanInternalStack = stack => stack.replace(/\s+at .*aggregate-error\/index.js:\d+:\d+\)?/g, '');
+
+class AggregateError extends Error {
+	constructor(errors) {
+		if (!Array.isArray(errors)) {
+			throw new TypeError(`Expected input to be an Array, got ${typeof errors}`);
+		}
+
+		errors = [...errors].map(error => {
+			if (error instanceof Error) {
+				return error;
+			}
+
+			if (error !== null && typeof error === 'object') {
+				// Handle plain error objects with message property and/or possibly other metadata
+				return Object.assign(new Error(error.message), error);
+			}
+
+			return new Error(error);
+		});
+
+		let message = errors
+			.map(error => {
+				// The `stack` property is not standardized, so we can't assume it exists
+				return typeof error.stack === 'string' ? cleanInternalStack(cleanStack(error.stack)) : String(error);
+			})
+			.join('\n');
+		message = '\n' + indentString(message, 4);
+		super(message);
+
+		this.name = 'AggregateError';
+
+		Object.defineProperty(this, '_errors', {value: errors});
+	}
+
+	* [Symbol.iterator]() {
+		for (const error of this._errors) {
+			yield error;
+		}
+	}
+}
+
+module.exports = AggregateError;
+
+
+/***/ }),
+/* 274 */,
+/* 275 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const path = __webpack_require__(622);
+const resolveFrom = __webpack_require__(925);
+const parentModule = __webpack_require__(235);
+
+module.exports = moduleId => {
+	if (typeof moduleId !== 'string') {
+		throw new TypeError('Expected a string');
+	}
+
+	const parentPath = parentModule(__filename);
+
+	const cwd = parentPath ? path.dirname(parentPath) : __dirname;
+	const filePath = resolveFrom(cwd, moduleId);
+
+	const oldModule = require.cache[filePath];
+	// Delete itself from module parent
+	if (oldModule && oldModule.parent) {
+		let i = oldModule.parent.children.length;
+
+		while (i--) {
+			if (oldModule.parent.children[i].id === filePath) {
+				oldModule.parent.children.splice(i, 1);
+			}
+		}
+	}
+
+	delete require.cache[filePath]; // Delete module from cache
+
+	const parent = require.cache[parentPath]; // If `filePath` and `parentPath` are the same, cache will already be deleted so we won't get a memory leak in next step
+
+	return parent === undefined ? require(filePath) : parent.require(filePath); // In case cache doesn't have parent, fall back to normal require
+};
+
+
+/***/ }),
+/* 276 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const util = __webpack_require__(669);
+const path = __webpack_require__(622);
+const readline = __webpack_require__(58);
+const chalk = __webpack_require__(694);
+const figures = __webpack_require__(412);
+const pkgConf = __webpack_require__(942);
+const pkg = __webpack_require__(802);
+const defaultTypes = __webpack_require__(254);
+
+const {green, grey, red, underline, yellow} = chalk;
+
+let isPreviousLogInteractive = false;
+const defaults = pkg.options.default;
+const namespace = pkg.name;
+
+class Signale {
+  constructor(options = {}) {
+    this._interactive = options.interactive || false;
+    this._config = Object.assign(this.packageConfiguration, options.config);
+    this._customTypes = Object.assign({}, options.types);
+    this._disabled = options.disabled || false;
+    this._scopeName = options.scope || '';
+    this._timers = options.timers || new Map();
+    this._types = this._mergeTypes(defaultTypes, this._customTypes);
+    this._stream = options.stream || process.stdout;
+    this._longestLabel = this._getLongestLabel();
+    this._secrets = options.secrets || [];
+    this._generalLogLevel = this._validateLogLevel(options.logLevel);
+
+    Object.keys(this._types).forEach(type => {
+      this[type] = this._logger.bind(this, type);
+    });
+  }
+
+  get _now() {
+    return Date.now();
+  }
+
+  get scopeName() {
+    return this._scopeName;
+  }
+
+  get currentOptions() {
+    return Object.assign({}, {
+      config: this._config,
+      disabled: this._disabled,
+      types: this._customTypes,
+      interactive: this._interactive,
+      timers: this._timers,
+      stream: this._stream,
+      secrets: this._secrets,
+      logLevel: this._generalLogLevel
+    });
+  }
+
+  get date() {
+    return new Date().toLocaleDateString();
+  }
+
+  get timestamp() {
+    return new Date().toLocaleTimeString();
+  }
+
+  get filename() {
+    const _ = Error.prepareStackTrace;
+    Error.prepareStackTrace = (error, stack) => stack;
+    const {stack} = new Error();
+    Error.prepareStackTrace = _;
+
+    const callers = stack.map(x => x.getFileName());
+
+    const firstExternalFilePath = callers.find(x => {
+      return x !== callers[0];
+    });
+
+    return firstExternalFilePath ? path.basename(firstExternalFilePath) : 'anonymous';
+  }
+
+  get packageConfiguration() {
+    return pkgConf.sync(namespace, {defaults});
+  }
+
+  get _longestUnderlinedLabel() {
+    return underline(this._longestLabel);
+  }
+
+  get _logLevels() {
+    return {
+      info: 0,
+      timer: 1,
+      debug: 2,
+      warn: 3,
+      error: 4
+    };
+  }
+
+  set configuration(configObj) {
+    this._config = Object.assign(this.packageConfiguration, configObj);
+  }
+
+  _arrayify(x) {
+    return Array.isArray(x) ? x : [x];
+  }
+
+  _timeSpan(then) {
+    return (this._now - then);
+  }
+
+  _getLongestLabel() {
+    const {_types} = this;
+    const labels = Object.keys(_types).map(x => _types[x].label);
+    return labels.reduce((x, y) => x.length > y.length ? x : y);
+  }
+
+  _validateLogLevel(level) {
+    return Object.keys(this._logLevels).includes(level) ? level : 'info';
+  }
+
+  _mergeTypes(standard, custom) {
+    const types = Object.assign({}, standard);
+
+    Object.keys(custom).forEach(type => {
+      types[type] = Object.assign({}, types[type], custom[type]);
+    });
+
+    return types;
+  }
+
+  _filterSecrets(message) {
+    const {_secrets} = this;
+
+    if (_secrets.length === 0) {
+      return message;
+    }
+
+    let safeMessage = message;
+
+    _secrets.forEach(secret => {
+      safeMessage = safeMessage.replace(new RegExp(secret, 'g'), '[secure]');
+    });
+
+    return safeMessage;
+  }
+
+  _formatStream(stream) {
+    return this._arrayify(stream);
+  }
+
+  _formatDate() {
+    return `[${this.date}]`;
+  }
+
+  _formatFilename() {
+    return `[${this.filename}]`;
+  }
+
+  _formatScopeName() {
+    if (Array.isArray(this._scopeName)) {
+      const scopes = this._scopeName.filter(x => x.length !== 0);
+      return `${scopes.map(x => `[${x.trim()}]`).join(' ')}`;
+    }
+
+    return `[${this._scopeName}]`;
+  }
+
+  _formatTimestamp() {
+    return `[${this.timestamp}]`;
+  }
+
+  _formatMessage(str) {
+    return util.format(...this._arrayify(str));
+  }
+
+  _meta() {
+    const meta = [];
+
+    if (this._config.displayDate) {
+      meta.push(this._formatDate());
+    }
+
+    if (this._config.displayTimestamp) {
+      meta.push(this._formatTimestamp());
+    }
+
+    if (this._config.displayFilename) {
+      meta.push(this._formatFilename());
+    }
+
+    if (this._scopeName.length !== 0 && this._config.displayScope) {
+      meta.push(this._formatScopeName());
+    }
+
+    if (meta.length !== 0) {
+      meta.push(`${figures.pointerSmall}`);
+      return meta.map(item => grey(item));
+    }
+
+    return meta;
+  }
+
+  _hasAdditional({suffix, prefix}, args) {
+    return (suffix || prefix) ? '' : this._formatMessage(args);
+  }
+
+  _buildSignale(type, ...args) {
+    let [msg, additional] = [{}, {}];
+
+    if (args.length === 1 && typeof (args[0]) === 'object' && args[0] !== null) {
+      if (args[0] instanceof Error) {
+        [msg] = args;
+      } else {
+        const [{prefix, message, suffix}] = args;
+        additional = Object.assign({}, {suffix, prefix});
+        msg = message ? this._formatMessage(message) : this._hasAdditional(additional, args);
+      }
+    } else {
+      msg = this._formatMessage(args);
+    }
+
+    const signale = this._meta();
+
+    if (additional.prefix) {
+      if (this._config.underlinePrefix) {
+        signale.push(underline(additional.prefix));
+      } else {
+        signale.push(additional.prefix);
+      }
+    }
+
+    if (this._config.displayBadge && type.badge) {
+      signale.push(chalk[type.color](this._padEnd(type.badge, type.badge.length + 1)));
+    }
+
+    if (this._config.displayLabel && type.label) {
+      const label = this._config.uppercaseLabel ? type.label.toUpperCase() : type.label;
+      if (this._config.underlineLabel) {
+        signale.push(chalk[type.color](this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
+      } else {
+        signale.push(chalk[type.color](this._padEnd(label, this._longestLabel.length + 1)));
+      }
+    }
+
+    if (msg instanceof Error && msg.stack) {
+      const [name, ...rest] = msg.stack.split('\n');
+      if (this._config.underlineMessage) {
+        signale.push(underline(name));
+      } else {
+        signale.push(name);
+      }
+
+      signale.push(grey(rest.map(l => l.replace(/^/, '\n')).join('')));
+      return signale.join(' ');
+    }
+
+    if (this._config.underlineMessage) {
+      signale.push(underline(msg));
+    } else {
+      signale.push(msg);
+    }
+
+    if (additional.suffix) {
+      if (this._config.underlineSuffix) {
+        signale.push(underline(additional.suffix));
+      } else {
+        signale.push(additional.suffix);
+      }
+    }
+
+    return signale.join(' ');
+  }
+
+  _write(stream, message) {
+    if (this._interactive && stream.isTTY && isPreviousLogInteractive) {
+      readline.moveCursor(stream, 0, -1);
+      readline.clearLine(stream);
+      readline.cursorTo(stream, 0);
+    }
+
+    stream.write(message + '\n');
+    isPreviousLogInteractive = this._interactive;
+  }
+
+  _log(message, streams = this._stream, logLevel) {
+    if (this.isEnabled() && this._logLevels[logLevel] >= this._logLevels[this._generalLogLevel]) {
+      this._formatStream(streams).forEach(stream => {
+        this._write(stream, message);
+      });
+    }
+  }
+
+  _logger(type, ...messageObj) {
+    const {stream, logLevel} = this._types[type];
+    const message = this._buildSignale(this._types[type], ...messageObj);
+    this._log(this._filterSecrets(message), stream, this._validateLogLevel(logLevel));
+  }
+
+  _padEnd(str, targetLength) {
+    str = String(str);
+    targetLength = parseInt(targetLength, 10) || 0;
+
+    if (str.length >= targetLength) {
+      return str;
+    }
+
+    if (String.prototype.padEnd) {
+      return str.padEnd(targetLength);
+    }
+
+    targetLength -= str.length;
+    return str + ' '.repeat(targetLength);
+  }
+
+  addSecrets(secrets) {
+    if (!Array.isArray(secrets)) {
+      throw new TypeError('Argument must be an array.');
+    }
+
+    this._secrets.push(...secrets);
+  }
+
+  clearSecrets() {
+    this._secrets = [];
+  }
+
+  config(configObj) {
+    this.configuration = configObj;
+  }
+
+  disable() {
+    this._disabled = true;
+  }
+
+  enable() {
+    this._disabled = false;
+  }
+
+  isEnabled() {
+    return !this._disabled;
+  }
+
+  scope(...name) {
+    if (name.length === 0) {
+      throw new Error('No scope name was defined.');
+    }
+
+    return new Signale(Object.assign(this.currentOptions, {scope: name}));
+  }
+
+  unscope() {
+    this._scopeName = '';
+  }
+
+  time(label) {
+    if (!label) {
+      label = `timer_${this._timers.size}`;
+    }
+
+    this._timers.set(label, this._now);
+
+    const message = this._meta();
+    message.push(green(this._padEnd(this._types.start.badge, 2)));
+
+    if (this._config.underlineLabel) {
+      message.push(green(this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
+    } else {
+      message.push(green(this._padEnd(label, this._longestLabel.length + 1)));
+    }
+
+    message.push('Initialized timer...');
+    this._log(message.join(' '), this._stream, 'timer');
+
+    return label;
+  }
+
+  timeEnd(label) {
+    if (!label && this._timers.size) {
+      const is = x => x.includes('timer_');
+      label = [...this._timers.keys()].reduceRight((x, y) => {
+        return is(x) ? x : (is(y) ? y : null);
+      });
+    }
+
+    if (this._timers.has(label)) {
+      const span = this._timeSpan(this._timers.get(label));
+      this._timers.delete(label);
+
+      const message = this._meta();
+      message.push(red(this._padEnd(this._types.pause.badge, 2)));
+
+      if (this._config.underlineLabel) {
+        message.push(red(this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
+      } else {
+        message.push(red(this._padEnd(label, this._longestLabel.length + 1)));
+      }
+
+      message.push('Timer run for:');
+      message.push(yellow(span < 1000 ? span + 'ms' : (span / 1000).toFixed(2) + 's'));
+      this._log(message.join(' '), this._stream, 'timer');
+
+      return {label, span};
+    }
+  }
+}
+
+module.exports = Signale;
+
+
+/***/ }),
+/* 277 */
+/***/ (function(module) {
+
+module.exports = {"name":"semantic-release","description":"Automated semver compliant package publishing","version":"17.4.2","author":"Stephan Bönnemann <stephan@boennemann.me> (http://boennemann.me)","ava":{"files":["test/**/*.test.js"],"timeout":"2m"},"bin":{"semantic-release":"bin/semantic-release.js"},"bugs":{"url":"https://github.com/semantic-release/semantic-release/issues"},"contributors":["Gregor Martynus (https://twitter.com/gr2m)","Pierre Vanduynslager (https://twitter.com/@pvdlg_)"],"dependencies":{"@semantic-release/commit-analyzer":"^8.0.0","@semantic-release/error":"^2.2.0","@semantic-release/github":"^7.0.0","@semantic-release/npm":"^7.0.0","@semantic-release/release-notes-generator":"^9.0.0","aggregate-error":"^3.0.0","cosmiconfig":"^7.0.0","debug":"^4.0.0","env-ci":"^5.0.0","execa":"^5.0.0","figures":"^3.0.0","find-versions":"^4.0.0","get-stream":"^6.0.0","git-log-parser":"^1.2.0","hook-std":"^2.0.0","hosted-git-info":"^4.0.0","lodash":"^4.17.15","marked":"^2.0.0","marked-terminal":"^4.1.1","micromatch":"^4.0.2","p-each-series":"^2.1.0","p-reduce":"^2.0.0","read-pkg-up":"^7.0.0","resolve-from":"^5.0.0","semver":"^7.3.2","semver-diff":"^3.1.1","signale":"^1.2.1","yargs":"^16.2.0"},"devDependencies":{"ava":"3.15.0","clear-module":"4.1.1","codecov":"3.8.1","delay":"5.0.0","dockerode":"3.2.1","file-url":"3.0.0","fs-extra":"9.1.0","got":"11.8.1","js-yaml":"3.14.1","mockserver-client":"5.11.2","nock":"13.0.7","nyc":"15.1.0","p-retry":"4.4.0","proxyquire":"2.1.3","sinon":"9.2.4","stream-buffers":"3.0.2","tempy":"1.0.0","xo":"0.29.1"},"engines":{"node":">=10.18"},"files":["bin","docs","lib","index.js","cli.js"],"homepage":"https://github.com/semantic-release/semantic-release#readme","keywords":["author","automation","changelog","module","package","publish","release","semver","version"],"license":"MIT","main":"index.js","nyc":{"include":["lib/**/*.js","index.js","cli.js"],"reporter":["json","text","html"],"all":true},"prettier":{"printWidth":120,"trailingComma":"es5"},"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/semantic-release/semantic-release.git"},"scripts":{"codecov":"codecov -f coverage/coverage-final.json","lint":"xo","pretest":"npm run lint","semantic-release":"./bin/semantic-release.js","test":"nyc ava -v","test:ci":"nyc ava -v"},"xo":{"prettier":true,"space":true,"rules":{"unicorn/string-content":"off"}},"renovate":{"extends":["github>semantic-release/.github"]},"_resolved":"https://registry.npmjs.org/semantic-release/-/semantic-release-17.4.2.tgz","_integrity":"sha512-TPLWuoe2L2DmgnQEh+OLWW5V1T+ZAa1xWuHXsuPAWEko0BqSdLPl+5+BlQ+D5Bp27S5gDJ1//Y1tgbmvUhnOCw==","_from":"semantic-release@17.4.2"};
+
+/***/ }),
+/* 278 */,
+/* 279 */,
+/* 280 */
+/***/ (function(module) {
+
+module.exports = register;
+
+function register(state, name, method, options) {
+  if (typeof method !== "function") {
+    throw new Error("method for before hook must be a function");
+  }
+
+  if (!options) {
+    options = {};
+  }
+
+  if (Array.isArray(name)) {
+    return name.reverse().reduce(function (callback, name) {
+      return register.bind(null, state, name, callback, options);
+    }, method)();
+  }
+
+  return Promise.resolve().then(function () {
+    if (!state.registry[name]) {
+      return method(options);
+    }
+
+    return state.registry[name].reduce(function (method, registered) {
+      return registered.hook.bind(null, method, options);
+    }, method)();
+  });
+}
+
+
+/***/ }),
+/* 281 */,
+/* 282 */
+/***/ (function(module) {
+
+module.exports = require("module");
+
+/***/ }),
+/* 283 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const compare = __webpack_require__(874)
+const compareLoose = (a, b) => compare(a, b, true)
+module.exports = compareLoose
+
+
+/***/ }),
+/* 284 */,
+/* 285 */,
+/* 286 */
+/***/ (function(__unusedmodule, exports) {
+
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// NOTE: These type checking functions intentionally don't use `instanceof`
+// because it is fragile and can be easily faked with `Object.create()`.
+
+function isArray(arg) {
+  if (Array.isArray) {
+    return Array.isArray(arg);
+  }
+  return objectToString(arg) === '[object Array]';
+}
+exports.isArray = isArray;
+
+function isBoolean(arg) {
+  return typeof arg === 'boolean';
+}
+exports.isBoolean = isBoolean;
+
+function isNull(arg) {
+  return arg === null;
+}
+exports.isNull = isNull;
+
+function isNullOrUndefined(arg) {
+  return arg == null;
+}
+exports.isNullOrUndefined = isNullOrUndefined;
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+exports.isNumber = isNumber;
+
+function isString(arg) {
+  return typeof arg === 'string';
+}
+exports.isString = isString;
+
+function isSymbol(arg) {
+  return typeof arg === 'symbol';
+}
+exports.isSymbol = isSymbol;
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+exports.isUndefined = isUndefined;
+
+function isRegExp(re) {
+  return objectToString(re) === '[object RegExp]';
+}
+exports.isRegExp = isRegExp;
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+exports.isObject = isObject;
+
+function isDate(d) {
+  return objectToString(d) === '[object Date]';
+}
+exports.isDate = isDate;
+
+function isError(e) {
+  return (objectToString(e) === '[object Error]' || e instanceof Error);
+}
+exports.isError = isError;
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+exports.isFunction = isFunction;
+
+function isPrimitive(arg) {
+  return arg === null ||
+         typeof arg === 'boolean' ||
+         typeof arg === 'number' ||
+         typeof arg === 'string' ||
+         typeof arg === 'symbol' ||  // ES6 symbol
+         typeof arg === 'undefined';
+}
+exports.isPrimitive = isPrimitive;
+
+exports.isBuffer = Buffer.isBuffer;
+
+function objectToString(o) {
+  return Object.prototype.toString.call(o);
+}
+
+
+/***/ }),
+/* 287 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+
+var PlainValue = __webpack_require__(513);
+var resolveSeq = __webpack_require__(329);
+
+/* global atob, btoa, Buffer */
+const binary = {
+  identify: value => value instanceof Uint8Array,
+  // Buffer inherits from Uint8Array
+  default: false,
+  tag: 'tag:yaml.org,2002:binary',
+
+  /**
+   * Returns a Buffer in node and an Uint8Array in browsers
+   *
+   * To use the resulting buffer as an image, you'll want to do something like:
+   *
+   *   const blob = new Blob([buffer], { type: 'image/jpeg' })
+   *   document.querySelector('#photo').src = URL.createObjectURL(blob)
+   */
+  resolve: (doc, node) => {
+    const src = resolveSeq.resolveString(doc, node);
+
+    if (typeof Buffer === 'function') {
+      return Buffer.from(src, 'base64');
+    } else if (typeof atob === 'function') {
+      // On IE 11, atob() can't handle newlines
+      const str = atob(src.replace(/[\n\r]/g, ''));
+      const buffer = new Uint8Array(str.length);
+
+      for (let i = 0; i < str.length; ++i) buffer[i] = str.charCodeAt(i);
+
+      return buffer;
+    } else {
+      const msg = 'This environment does not support reading binary tags; either Buffer or atob is required';
+      doc.errors.push(new PlainValue.YAMLReferenceError(node, msg));
+      return null;
+    }
+  },
+  options: resolveSeq.binaryOptions,
+  stringify: ({
+    comment,
+    type,
+    value
+  }, ctx, onComment, onChompKeep) => {
+    let src;
+
+    if (typeof Buffer === 'function') {
+      src = value instanceof Buffer ? value.toString('base64') : Buffer.from(value.buffer).toString('base64');
+    } else if (typeof btoa === 'function') {
+      let s = '';
+
+      for (let i = 0; i < value.length; ++i) s += String.fromCharCode(value[i]);
+
+      src = btoa(s);
+    } else {
+      throw new Error('This environment does not support writing binary tags; either Buffer or btoa is required');
+    }
+
+    if (!type) type = resolveSeq.binaryOptions.defaultType;
+
+    if (type === PlainValue.Type.QUOTE_DOUBLE) {
+      value = src;
+    } else {
+      const {
+        lineWidth
+      } = resolveSeq.binaryOptions;
+      const n = Math.ceil(src.length / lineWidth);
+      const lines = new Array(n);
+
+      for (let i = 0, o = 0; i < n; ++i, o += lineWidth) {
+        lines[i] = src.substr(o, lineWidth);
+      }
+
+      value = lines.join(type === PlainValue.Type.BLOCK_LITERAL ? '\n' : ' ');
+    }
+
+    return resolveSeq.stringifyString({
+      comment,
+      type,
+      value
+    }, ctx, onComment, onChompKeep);
+  }
+};
+
+function parsePairs(doc, cst) {
+  const seq = resolveSeq.resolveSeq(doc, cst);
+
+  for (let i = 0; i < seq.items.length; ++i) {
+    let item = seq.items[i];
+    if (item instanceof resolveSeq.Pair) continue;else if (item instanceof resolveSeq.YAMLMap) {
+      if (item.items.length > 1) {
+        const msg = 'Each pair must have its own sequence indicator';
+        throw new PlainValue.YAMLSemanticError(cst, msg);
+      }
+
+      const pair = item.items[0] || new resolveSeq.Pair();
+      if (item.commentBefore) pair.commentBefore = pair.commentBefore ? `${item.commentBefore}\n${pair.commentBefore}` : item.commentBefore;
+      if (item.comment) pair.comment = pair.comment ? `${item.comment}\n${pair.comment}` : item.comment;
+      item = pair;
+    }
+    seq.items[i] = item instanceof resolveSeq.Pair ? item : new resolveSeq.Pair(item);
+  }
+
+  return seq;
+}
+function createPairs(schema, iterable, ctx) {
+  const pairs = new resolveSeq.YAMLSeq(schema);
+  pairs.tag = 'tag:yaml.org,2002:pairs';
+
+  for (const it of iterable) {
+    let key, value;
+
+    if (Array.isArray(it)) {
+      if (it.length === 2) {
+        key = it[0];
+        value = it[1];
+      } else throw new TypeError(`Expected [key, value] tuple: ${it}`);
+    } else if (it && it instanceof Object) {
+      const keys = Object.keys(it);
+
+      if (keys.length === 1) {
+        key = keys[0];
+        value = it[key];
+      } else throw new TypeError(`Expected { key: value } tuple: ${it}`);
+    } else {
+      key = it;
+    }
+
+    const pair = schema.createPair(key, value, ctx);
+    pairs.items.push(pair);
+  }
+
+  return pairs;
+}
+const pairs = {
+  default: false,
+  tag: 'tag:yaml.org,2002:pairs',
+  resolve: parsePairs,
+  createNode: createPairs
+};
+
+class YAMLOMap extends resolveSeq.YAMLSeq {
+  constructor() {
+    super();
+
+    PlainValue._defineProperty(this, "add", resolveSeq.YAMLMap.prototype.add.bind(this));
+
+    PlainValue._defineProperty(this, "delete", resolveSeq.YAMLMap.prototype.delete.bind(this));
+
+    PlainValue._defineProperty(this, "get", resolveSeq.YAMLMap.prototype.get.bind(this));
+
+    PlainValue._defineProperty(this, "has", resolveSeq.YAMLMap.prototype.has.bind(this));
+
+    PlainValue._defineProperty(this, "set", resolveSeq.YAMLMap.prototype.set.bind(this));
+
+    this.tag = YAMLOMap.tag;
+  }
+
+  toJSON(_, ctx) {
+    const map = new Map();
+    if (ctx && ctx.onCreate) ctx.onCreate(map);
+
+    for (const pair of this.items) {
+      let key, value;
+
+      if (pair instanceof resolveSeq.Pair) {
+        key = resolveSeq.toJSON(pair.key, '', ctx);
+        value = resolveSeq.toJSON(pair.value, key, ctx);
+      } else {
+        key = resolveSeq.toJSON(pair, '', ctx);
+      }
+
+      if (map.has(key)) throw new Error('Ordered maps must not include duplicate keys');
+      map.set(key, value);
+    }
+
+    return map;
+  }
+
+}
+
+PlainValue._defineProperty(YAMLOMap, "tag", 'tag:yaml.org,2002:omap');
+
+function parseOMap(doc, cst) {
+  const pairs = parsePairs(doc, cst);
+  const seenKeys = [];
+
+  for (const {
+    key
+  } of pairs.items) {
+    if (key instanceof resolveSeq.Scalar) {
+      if (seenKeys.includes(key.value)) {
+        const msg = 'Ordered maps must not include duplicate keys';
+        throw new PlainValue.YAMLSemanticError(cst, msg);
+      } else {
+        seenKeys.push(key.value);
+      }
+    }
+  }
+
+  return Object.assign(new YAMLOMap(), pairs);
+}
+
+function createOMap(schema, iterable, ctx) {
+  const pairs = createPairs(schema, iterable, ctx);
+  const omap = new YAMLOMap();
+  omap.items = pairs.items;
+  return omap;
+}
+
+const omap = {
+  identify: value => value instanceof Map,
+  nodeClass: YAMLOMap,
+  default: false,
+  tag: 'tag:yaml.org,2002:omap',
+  resolve: parseOMap,
+  createNode: createOMap
+};
+
+class YAMLSet extends resolveSeq.YAMLMap {
+  constructor() {
+    super();
+    this.tag = YAMLSet.tag;
+  }
+
+  add(key) {
+    const pair = key instanceof resolveSeq.Pair ? key : new resolveSeq.Pair(key);
+    const prev = resolveSeq.findPair(this.items, pair.key);
+    if (!prev) this.items.push(pair);
+  }
+
+  get(key, keepPair) {
+    const pair = resolveSeq.findPair(this.items, key);
+    return !keepPair && pair instanceof resolveSeq.Pair ? pair.key instanceof resolveSeq.Scalar ? pair.key.value : pair.key : pair;
+  }
+
+  set(key, value) {
+    if (typeof value !== 'boolean') throw new Error(`Expected boolean value for set(key, value) in a YAML set, not ${typeof value}`);
+    const prev = resolveSeq.findPair(this.items, key);
+
+    if (prev && !value) {
+      this.items.splice(this.items.indexOf(prev), 1);
+    } else if (!prev && value) {
+      this.items.push(new resolveSeq.Pair(key));
+    }
+  }
+
+  toJSON(_, ctx) {
+    return super.toJSON(_, ctx, Set);
+  }
+
+  toString(ctx, onComment, onChompKeep) {
+    if (!ctx) return JSON.stringify(this);
+    if (this.hasAllNullValues()) return super.toString(ctx, onComment, onChompKeep);else throw new Error('Set items must all have null values');
+  }
+
+}
+
+PlainValue._defineProperty(YAMLSet, "tag", 'tag:yaml.org,2002:set');
+
+function parseSet(doc, cst) {
+  const map = resolveSeq.resolveMap(doc, cst);
+  if (!map.hasAllNullValues()) throw new PlainValue.YAMLSemanticError(cst, 'Set items must all have null values');
+  return Object.assign(new YAMLSet(), map);
+}
+
+function createSet(schema, iterable, ctx) {
+  const set = new YAMLSet();
+
+  for (const value of iterable) set.items.push(schema.createPair(value, null, ctx));
+
+  return set;
+}
+
+const set = {
+  identify: value => value instanceof Set,
+  nodeClass: YAMLSet,
+  default: false,
+  tag: 'tag:yaml.org,2002:set',
+  resolve: parseSet,
+  createNode: createSet
+};
+
+const parseSexagesimal = (sign, parts) => {
+  const n = parts.split(':').reduce((n, p) => n * 60 + Number(p), 0);
+  return sign === '-' ? -n : n;
+}; // hhhh:mm:ss.sss
+
+
+const stringifySexagesimal = ({
+  value
+}) => {
+  if (isNaN(value) || !isFinite(value)) return resolveSeq.stringifyNumber(value);
+  let sign = '';
+
+  if (value < 0) {
+    sign = '-';
+    value = Math.abs(value);
+  }
+
+  const parts = [value % 60]; // seconds, including ms
+
+  if (value < 60) {
+    parts.unshift(0); // at least one : is required
+  } else {
+    value = Math.round((value - parts[0]) / 60);
+    parts.unshift(value % 60); // minutes
+
+    if (value >= 60) {
+      value = Math.round((value - parts[0]) / 60);
+      parts.unshift(value); // hours
+    }
+  }
+
+  return sign + parts.map(n => n < 10 ? '0' + String(n) : String(n)).join(':').replace(/000000\d*$/, '') // % 60 may introduce error
+  ;
+};
+
+const intTime = {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'TIME',
+  test: /^([-+]?)([0-9][0-9_]*(?::[0-5]?[0-9])+)$/,
+  resolve: (str, sign, parts) => parseSexagesimal(sign, parts.replace(/_/g, '')),
+  stringify: stringifySexagesimal
+};
+const floatTime = {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  format: 'TIME',
+  test: /^([-+]?)([0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*)$/,
+  resolve: (str, sign, parts) => parseSexagesimal(sign, parts.replace(/_/g, '')),
+  stringify: stringifySexagesimal
+};
+const timestamp = {
+  identify: value => value instanceof Date,
+  default: true,
+  tag: 'tag:yaml.org,2002:timestamp',
+  // If the time zone is omitted, the timestamp is assumed to be specified in UTC. The time part
+  // may be omitted altogether, resulting in a date format. In such a case, the time part is
+  // assumed to be 00:00:00Z (start of day, UTC).
+  test: RegExp('^(?:' + '([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})' + // YYYY-Mm-Dd
+  '(?:(?:t|T|[ \\t]+)' + // t | T | whitespace
+  '([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)' + // Hh:Mm:Ss(.ss)?
+  '(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?' + // Z | +5 | -03:30
+  ')?' + ')$'),
+  resolve: (str, year, month, day, hour, minute, second, millisec, tz) => {
+    if (millisec) millisec = (millisec + '00').substr(1, 3);
+    let date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec || 0);
+
+    if (tz && tz !== 'Z') {
+      let d = parseSexagesimal(tz[0], tz.slice(1));
+      if (Math.abs(d) < 30) d *= 60;
+      date -= 60000 * d;
+    }
+
+    return new Date(date);
+  },
+  stringify: ({
+    value
+  }) => value.toISOString().replace(/((T00:00)?:00)?\.000Z$/, '')
+};
+
+/* global console, process, YAML_SILENCE_DEPRECATION_WARNINGS, YAML_SILENCE_WARNINGS */
+function shouldWarn(deprecation) {
+  const env = typeof process !== 'undefined' && process.env || {};
+
+  if (deprecation) {
+    if (typeof YAML_SILENCE_DEPRECATION_WARNINGS !== 'undefined') return !YAML_SILENCE_DEPRECATION_WARNINGS;
+    return !env.YAML_SILENCE_DEPRECATION_WARNINGS;
+  }
+
+  if (typeof YAML_SILENCE_WARNINGS !== 'undefined') return !YAML_SILENCE_WARNINGS;
+  return !env.YAML_SILENCE_WARNINGS;
+}
+
+function warn(warning, type) {
+  if (shouldWarn(false)) {
+    const emit = typeof process !== 'undefined' && process.emitWarning; // This will throw in Jest if `warning` is an Error instance due to
+    // https://github.com/facebook/jest/issues/2549
+
+    if (emit) emit(warning, type);else {
+      // eslint-disable-next-line no-console
+      console.warn(type ? `${type}: ${warning}` : warning);
+    }
+  }
+}
+function warnFileDeprecation(filename) {
+  if (shouldWarn(true)) {
+    const path = filename.replace(/.*yaml[/\\]/i, '').replace(/\.js$/, '').replace(/\\/g, '/');
+    warn(`The endpoint 'yaml/${path}' will be removed in a future release.`, 'DeprecationWarning');
+  }
+}
+const warned = {};
+function warnOptionDeprecation(name, alternative) {
+  if (!warned[name] && shouldWarn(true)) {
+    warned[name] = true;
+    let msg = `The option '${name}' will be removed in a future release`;
+    msg += alternative ? `, use '${alternative}' instead.` : '.';
+    warn(msg, 'DeprecationWarning');
+  }
+}
+
+exports.binary = binary;
+exports.floatTime = floatTime;
+exports.intTime = intTime;
+exports.omap = omap;
+exports.pairs = pairs;
+exports.set = set;
+exports.timestamp = timestamp;
+exports.warn = warn;
+exports.warnFileDeprecation = warnFileDeprecation;
+exports.warnOptionDeprecation = warnOptionDeprecation;
+
+
+/***/ }),
+/* 288 */,
+/* 289 */,
+/* 290 */,
+/* 291 */,
+/* 292 */,
+/* 293 */
+/***/ (function(module) {
+
+module.exports = require("buffer");
+
+/***/ }),
+/* 294 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const fs = __webpack_require__(747);
+const {promisify} = __webpack_require__(669);
+
+const pAccess = promisify(fs.access);
+
+module.exports = async path => {
+	try {
+		await pAccess(path);
+		return true;
+	} catch (_) {
+		return false;
+	}
+};
+
+module.exports.sync = path => {
+	try {
+		fs.accessSync(path);
+		return true;
+	} catch (_) {
+		return false;
+	}
+};
+
+
+/***/ }),
+/* 295 */,
+/* 296 */,
+/* 297 */,
+/* 298 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const compare = __webpack_require__(874)
+const eq = (a, b, loose) => compare(a, b, loose) === 0
+module.exports = eq
+
+
+/***/ }),
+/* 299 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
+const VERSION = "2.13.3";
+
+/**
+ * Some “list” response that can be paginated have a different response structure
+ *
+ * They have a `total_count` key in the response (search also has `incomplete_results`,
+ * /installation/repositories also has `repository_selection`), as well as a key with
+ * the list of the items which name varies from endpoint to endpoint.
+ *
+ * Octokit normalizes these responses so that paginated results are always returned following
+ * the same structure. One challenge is that if the list response has only one page, no Link
+ * header is provided, so this header alone is not sufficient to check wether a response is
+ * paginated or not.
+ *
+ * We check if a "total_count" key is present in the response data, but also make sure that
+ * a "url" property is not, as the "Get the combined status for a specific ref" endpoint would
+ * otherwise match: https://developer.github.com/v3/repos/statuses/#get-the-combined-status-for-a-specific-ref
+ */
+function normalizePaginatedListResponse(response) {
+  const responseNeedsNormalization = "total_count" in response.data && !("url" in response.data);
+  if (!responseNeedsNormalization) return response; // keep the additional properties intact as there is currently no other way
+  // to retrieve the same information.
+
+  const incompleteResults = response.data.incomplete_results;
+  const repositorySelection = response.data.repository_selection;
+  const totalCount = response.data.total_count;
+  delete response.data.incomplete_results;
+  delete response.data.repository_selection;
+  delete response.data.total_count;
+  const namespaceKey = Object.keys(response.data)[0];
+  const data = response.data[namespaceKey];
+  response.data = data;
+
+  if (typeof incompleteResults !== "undefined") {
+    response.data.incomplete_results = incompleteResults;
+  }
+
+  if (typeof repositorySelection !== "undefined") {
+    response.data.repository_selection = repositorySelection;
+  }
+
+  response.data.total_count = totalCount;
+  return response;
+}
+
+function iterator(octokit, route, parameters) {
+  const options = typeof route === "function" ? route.endpoint(parameters) : octokit.request.endpoint(route, parameters);
+  const requestMethod = typeof route === "function" ? route : octokit.request;
+  const method = options.method;
+  const headers = options.headers;
+  let url = options.url;
+  return {
+    [Symbol.asyncIterator]: () => ({
+      async next() {
+        if (!url) return {
+          done: true
+        };
+        const response = await requestMethod({
+          method,
+          url,
+          headers
+        });
+        const normalizedResponse = normalizePaginatedListResponse(response); // `response.headers.link` format:
+        // '<https://api.github.com/users/aseemk/followers?page=2>; rel="next", <https://api.github.com/users/aseemk/followers?page=2>; rel="last"'
+        // sets `url` to undefined if "next" URL is not present or `link` header is not set
+
+        url = ((normalizedResponse.headers.link || "").match(/<([^>]+)>;\s*rel="next"/) || [])[1];
+        return {
+          value: normalizedResponse
+        };
+      }
+
+    })
+  };
+}
+
+function paginate(octokit, route, parameters, mapFn) {
+  if (typeof parameters === "function") {
+    mapFn = parameters;
+    parameters = undefined;
+  }
+
+  return gather(octokit, [], iterator(octokit, route, parameters)[Symbol.asyncIterator](), mapFn);
+}
+
+function gather(octokit, results, iterator, mapFn) {
+  return iterator.next().then(result => {
+    if (result.done) {
+      return results;
+    }
+
+    let earlyExit = false;
+
+    function done() {
+      earlyExit = true;
+    }
+
+    results = results.concat(mapFn ? mapFn(result.value, done) : result.value.data);
+
+    if (earlyExit) {
+      return results;
+    }
+
+    return gather(octokit, results, iterator, mapFn);
+  });
+}
+
+const composePaginateRest = Object.assign(paginate, {
+  iterator
+});
+
+const paginatingEndpoints = ["GET /app/installations", "GET /applications/grants", "GET /authorizations", "GET /enterprises/{enterprise}/actions/permissions/organizations", "GET /enterprises/{enterprise}/actions/runner-groups", "GET /enterprises/{enterprise}/actions/runner-groups/{runner_group_id}/organizations", "GET /enterprises/{enterprise}/actions/runner-groups/{runner_group_id}/runners", "GET /enterprises/{enterprise}/actions/runners", "GET /enterprises/{enterprise}/actions/runners/downloads", "GET /events", "GET /gists", "GET /gists/public", "GET /gists/starred", "GET /gists/{gist_id}/comments", "GET /gists/{gist_id}/commits", "GET /gists/{gist_id}/forks", "GET /installation/repositories", "GET /issues", "GET /marketplace_listing/plans", "GET /marketplace_listing/plans/{plan_id}/accounts", "GET /marketplace_listing/stubbed/plans", "GET /marketplace_listing/stubbed/plans/{plan_id}/accounts", "GET /networks/{owner}/{repo}/events", "GET /notifications", "GET /organizations", "GET /orgs/{org}/actions/permissions/repositories", "GET /orgs/{org}/actions/runner-groups", "GET /orgs/{org}/actions/runner-groups/{runner_group_id}/repositories", "GET /orgs/{org}/actions/runner-groups/{runner_group_id}/runners", "GET /orgs/{org}/actions/runners", "GET /orgs/{org}/actions/runners/downloads", "GET /orgs/{org}/actions/secrets", "GET /orgs/{org}/actions/secrets/{secret_name}/repositories", "GET /orgs/{org}/blocks", "GET /orgs/{org}/credential-authorizations", "GET /orgs/{org}/events", "GET /orgs/{org}/failed_invitations", "GET /orgs/{org}/hooks", "GET /orgs/{org}/installations", "GET /orgs/{org}/invitations", "GET /orgs/{org}/invitations/{invitation_id}/teams", "GET /orgs/{org}/issues", "GET /orgs/{org}/members", "GET /orgs/{org}/migrations", "GET /orgs/{org}/migrations/{migration_id}/repositories", "GET /orgs/{org}/outside_collaborators", "GET /orgs/{org}/projects", "GET /orgs/{org}/public_members", "GET /orgs/{org}/repos", "GET /orgs/{org}/team-sync/groups", "GET /orgs/{org}/teams", "GET /orgs/{org}/teams/{team_slug}/discussions", "GET /orgs/{org}/teams/{team_slug}/discussions/{discussion_number}/comments", "GET /orgs/{org}/teams/{team_slug}/discussions/{discussion_number}/comments/{comment_number}/reactions", "GET /orgs/{org}/teams/{team_slug}/discussions/{discussion_number}/reactions", "GET /orgs/{org}/teams/{team_slug}/invitations", "GET /orgs/{org}/teams/{team_slug}/members", "GET /orgs/{org}/teams/{team_slug}/projects", "GET /orgs/{org}/teams/{team_slug}/repos", "GET /orgs/{org}/teams/{team_slug}/team-sync/group-mappings", "GET /orgs/{org}/teams/{team_slug}/teams", "GET /projects/columns/{column_id}/cards", "GET /projects/{project_id}/collaborators", "GET /projects/{project_id}/columns", "GET /repos/{owner}/{repo}/actions/artifacts", "GET /repos/{owner}/{repo}/actions/runners", "GET /repos/{owner}/{repo}/actions/runners/downloads", "GET /repos/{owner}/{repo}/actions/runs", "GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts", "GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs", "GET /repos/{owner}/{repo}/actions/secrets", "GET /repos/{owner}/{repo}/actions/workflows", "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", "GET /repos/{owner}/{repo}/assignees", "GET /repos/{owner}/{repo}/branches", "GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations", "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}/check-runs", "GET /repos/{owner}/{repo}/code-scanning/alerts", "GET /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/instances", "GET /repos/{owner}/{repo}/code-scanning/analyses", "GET /repos/{owner}/{repo}/collaborators", "GET /repos/{owner}/{repo}/comments", "GET /repos/{owner}/{repo}/comments/{comment_id}/reactions", "GET /repos/{owner}/{repo}/commits", "GET /repos/{owner}/{repo}/commits/{commit_sha}/branches-where-head", "GET /repos/{owner}/{repo}/commits/{commit_sha}/comments", "GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls", "GET /repos/{owner}/{repo}/commits/{ref}/check-runs", "GET /repos/{owner}/{repo}/commits/{ref}/check-suites", "GET /repos/{owner}/{repo}/commits/{ref}/statuses", "GET /repos/{owner}/{repo}/contributors", "GET /repos/{owner}/{repo}/deployments", "GET /repos/{owner}/{repo}/deployments/{deployment_id}/statuses", "GET /repos/{owner}/{repo}/events", "GET /repos/{owner}/{repo}/forks", "GET /repos/{owner}/{repo}/git/matching-refs/{ref}", "GET /repos/{owner}/{repo}/hooks", "GET /repos/{owner}/{repo}/invitations", "GET /repos/{owner}/{repo}/issues", "GET /repos/{owner}/{repo}/issues/comments", "GET /repos/{owner}/{repo}/issues/comments/{comment_id}/reactions", "GET /repos/{owner}/{repo}/issues/events", "GET /repos/{owner}/{repo}/issues/{issue_number}/comments", "GET /repos/{owner}/{repo}/issues/{issue_number}/events", "GET /repos/{owner}/{repo}/issues/{issue_number}/labels", "GET /repos/{owner}/{repo}/issues/{issue_number}/reactions", "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", "GET /repos/{owner}/{repo}/keys", "GET /repos/{owner}/{repo}/labels", "GET /repos/{owner}/{repo}/milestones", "GET /repos/{owner}/{repo}/milestones/{milestone_number}/labels", "GET /repos/{owner}/{repo}/notifications", "GET /repos/{owner}/{repo}/pages/builds", "GET /repos/{owner}/{repo}/projects", "GET /repos/{owner}/{repo}/pulls", "GET /repos/{owner}/{repo}/pulls/comments", "GET /repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions", "GET /repos/{owner}/{repo}/pulls/{pull_number}/comments", "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits", "GET /repos/{owner}/{repo}/pulls/{pull_number}/files", "GET /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers", "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/comments", "GET /repos/{owner}/{repo}/releases", "GET /repos/{owner}/{repo}/releases/{release_id}/assets", "GET /repos/{owner}/{repo}/secret-scanning/alerts", "GET /repos/{owner}/{repo}/stargazers", "GET /repos/{owner}/{repo}/subscribers", "GET /repos/{owner}/{repo}/tags", "GET /repos/{owner}/{repo}/teams", "GET /repositories", "GET /repositories/{repository_id}/environments/{environment_name}/secrets", "GET /scim/v2/enterprises/{enterprise}/Groups", "GET /scim/v2/enterprises/{enterprise}/Users", "GET /scim/v2/organizations/{org}/Users", "GET /search/code", "GET /search/commits", "GET /search/issues", "GET /search/labels", "GET /search/repositories", "GET /search/topics", "GET /search/users", "GET /teams/{team_id}/discussions", "GET /teams/{team_id}/discussions/{discussion_number}/comments", "GET /teams/{team_id}/discussions/{discussion_number}/comments/{comment_number}/reactions", "GET /teams/{team_id}/discussions/{discussion_number}/reactions", "GET /teams/{team_id}/invitations", "GET /teams/{team_id}/members", "GET /teams/{team_id}/projects", "GET /teams/{team_id}/repos", "GET /teams/{team_id}/team-sync/group-mappings", "GET /teams/{team_id}/teams", "GET /user/blocks", "GET /user/emails", "GET /user/followers", "GET /user/following", "GET /user/gpg_keys", "GET /user/installations", "GET /user/installations/{installation_id}/repositories", "GET /user/issues", "GET /user/keys", "GET /user/marketplace_purchases", "GET /user/marketplace_purchases/stubbed", "GET /user/memberships/orgs", "GET /user/migrations", "GET /user/migrations/{migration_id}/repositories", "GET /user/orgs", "GET /user/public_emails", "GET /user/repos", "GET /user/repository_invitations", "GET /user/starred", "GET /user/subscriptions", "GET /user/teams", "GET /users", "GET /users/{username}/events", "GET /users/{username}/events/orgs/{org}", "GET /users/{username}/events/public", "GET /users/{username}/followers", "GET /users/{username}/following", "GET /users/{username}/gists", "GET /users/{username}/gpg_keys", "GET /users/{username}/keys", "GET /users/{username}/orgs", "GET /users/{username}/projects", "GET /users/{username}/received_events", "GET /users/{username}/received_events/public", "GET /users/{username}/repos", "GET /users/{username}/starred", "GET /users/{username}/subscriptions"];
+
+function isPaginatingEndpoint(arg) {
+  if (typeof arg === "string") {
+    return paginatingEndpoints.includes(arg);
+  } else {
+    return false;
+  }
+}
+
+/**
+ * @param octokit Octokit instance
+ * @param options Options passed to Octokit constructor
+ */
+
+function paginateRest(octokit) {
+  return {
+    paginate: Object.assign(paginate.bind(null, octokit), {
+      iterator: iterator.bind(null, octokit)
+    })
+  };
+}
+paginateRest.VERSION = VERSION;
+
+exports.composePaginateRest = composePaginateRest;
+exports.isPaginatingEndpoint = isPaginatingEndpoint;
+exports.paginateRest = paginateRest;
+exports.paginatingEndpoints = paginatingEndpoints;
+//# sourceMappingURL=index.js.map
+
+
+/***/ }),
+/* 300 */,
+/* 301 */,
+/* 302 */,
+/* 303 */,
+/* 304 */,
+/* 305 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+module.exports = {
+    highlight: __webpack_require__(994)
+  , highlightFile: __webpack_require__(409)
+  , highlightFileSync: __webpack_require__(906)
+}
+
+
+/***/ }),
+/* 306 */,
+/* 307 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+// https://help.github.com/en/articles/virtual-environments-for-github-actions#environment-variables
+const {parseBranch} = __webpack_require__(804);
+
+const getPrEvent = ({env}) => {
+	try {
+		const event = env.GITHUB_EVENT_PATH ? require(env.GITHUB_EVENT_PATH) : undefined;
+
+		if (event && event.pull_request) {
+			return {
+				branch: event.pull_request.base ? parseBranch(event.pull_request.base.ref) : undefined,
+				pr: event.pull_request.number,
+			};
+		}
+	} catch (_) {
+		// Noop
+	}
+
+	return {pr: undefined, branch: undefined};
+};
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.GITHUB_ACTION);
+	},
+	configuration({env, cwd}) {
+		const isPr = env.GITHUB_EVENT_NAME === 'pull_request';
+		const branch = parseBranch(env.GITHUB_REF);
+
+		return {
+			name: 'GitHub Actions',
+			service: 'github',
+			commit: env.GITHUB_SHA,
+			isPr,
+			branch,
+			prBranch: isPr ? branch : undefined,
+			slug: env.GITHUB_REPOSITORY,
+			root: env.GITHUB_WORKSPACE,
+			...(isPr ? getPrEvent({env, cwd}) : undefined),
+		};
+	},
+};
+
+
+/***/ }),
+/* 308 */,
+/* 309 */,
+/* 310 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const Range = __webpack_require__(124)
+const satisfies = (version, range, options) => {
+  try {
+    range = new Range(range, options)
+  } catch (er) {
+    return false
+  }
+  return range.test(version)
+}
+module.exports = satisfies
+
+
+/***/ }),
+/* 311 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.signalsByNumber=exports.signalsByName=void 0;var _os=__webpack_require__(87);
+
+var _signals=__webpack_require__(652);
+var _realtime=__webpack_require__(260);
+
+
+
+const getSignalsByName=function(){
+const signals=(0,_signals.getSignals)();
+return signals.reduce(getSignalByName,{});
+};
+
+const getSignalByName=function(
+signalByNameMemo,
+{name,number,description,supported,action,forced,standard})
+{
+return{
+...signalByNameMemo,
+[name]:{name,number,description,supported,action,forced,standard}};
+
+};
+
+const signalsByName=getSignalsByName();exports.signalsByName=signalsByName;
+
+
+
+
+const getSignalsByNumber=function(){
+const signals=(0,_signals.getSignals)();
+const length=_realtime.SIGRTMAX+1;
+const signalsA=Array.from({length},(value,number)=>
+getSignalByNumber(number,signals));
+
+return Object.assign({},...signalsA);
+};
+
+const getSignalByNumber=function(number,signals){
+const signal=findSignalByNumber(number,signals);
+
+if(signal===undefined){
+return{};
+}
+
+const{name,description,supported,action,forced,standard}=signal;
+return{
+[number]:{
+name,
+number,
+description,
+supported,
+action,
+forced,
+standard}};
+
+
+};
+
+
+
+const findSignalByNumber=function(number,signals){
+const signal=signals.find(({name})=>_os.constants.signals[name]===number);
+
+if(signal!==undefined){
+return signal;
+}
+
+return signals.find(signalA=>signalA.number===number);
+};
+
+const signalsByNumber=getSignalsByNumber();exports.signalsByNumber=signalsByNumber;
+//# sourceMappingURL=main.js.map
+
+/***/ }),
+/* 312 */,
+/* 313 */,
+/* 314 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+const utils = __webpack_require__(224);
+const {
+  CHAR_ASTERISK,             /* * */
+  CHAR_AT,                   /* @ */
+  CHAR_BACKWARD_SLASH,       /* \ */
+  CHAR_COMMA,                /* , */
+  CHAR_DOT,                  /* . */
+  CHAR_EXCLAMATION_MARK,     /* ! */
+  CHAR_FORWARD_SLASH,        /* / */
+  CHAR_LEFT_CURLY_BRACE,     /* { */
+  CHAR_LEFT_PARENTHESES,     /* ( */
+  CHAR_LEFT_SQUARE_BRACKET,  /* [ */
+  CHAR_PLUS,                 /* + */
+  CHAR_QUESTION_MARK,        /* ? */
+  CHAR_RIGHT_CURLY_BRACE,    /* } */
+  CHAR_RIGHT_PARENTHESES,    /* ) */
+  CHAR_RIGHT_SQUARE_BRACKET  /* ] */
+} = __webpack_require__(446);
+
+const isPathSeparator = code => {
+  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
+};
+
+const depth = token => {
+  if (token.isPrefix !== true) {
+    token.depth = token.isGlobstar ? Infinity : 1;
+  }
+};
+
+/**
+ * Quickly scans a glob pattern and returns an object with a handful of
+ * useful properties, like `isGlob`, `path` (the leading non-glob, if it exists),
+ * `glob` (the actual pattern), and `negated` (true if the path starts with `!`).
+ *
+ * ```js
+ * const pm = require('picomatch');
+ * console.log(pm.scan('foo/bar/*.js'));
+ * { isGlob: true, input: 'foo/bar/*.js', base: 'foo/bar', glob: '*.js' }
+ * ```
+ * @param {String} `str`
+ * @param {Object} `options`
+ * @return {Object} Returns an object with tokens and regex source string.
+ * @api public
+ */
+
+const scan = (input, options) => {
+  const opts = options || {};
+
+  const length = input.length - 1;
+  const scanToEnd = opts.parts === true || opts.scanToEnd === true;
+  const slashes = [];
+  const tokens = [];
+  const parts = [];
+
+  let str = input;
+  let index = -1;
+  let start = 0;
+  let lastIndex = 0;
+  let isBrace = false;
+  let isBracket = false;
+  let isGlob = false;
+  let isExtglob = false;
+  let isGlobstar = false;
+  let braceEscaped = false;
+  let backslashes = false;
+  let negated = false;
+  let finished = false;
+  let braces = 0;
+  let prev;
+  let code;
+  let token = { value: '', depth: 0, isGlob: false };
+
+  const eos = () => index >= length;
+  const peek = () => str.charCodeAt(index + 1);
+  const advance = () => {
+    prev = code;
+    return str.charCodeAt(++index);
+  };
+
+  while (index < length) {
+    code = advance();
+    let next;
+
+    if (code === CHAR_BACKWARD_SLASH) {
+      backslashes = token.backslashes = true;
+      code = advance();
+
+      if (code === CHAR_LEFT_CURLY_BRACE) {
+        braceEscaped = true;
+      }
+      continue;
+    }
+
+    if (braceEscaped === true || code === CHAR_LEFT_CURLY_BRACE) {
+      braces++;
+
+      while (eos() !== true && (code = advance())) {
+        if (code === CHAR_BACKWARD_SLASH) {
+          backslashes = token.backslashes = true;
+          advance();
+          continue;
+        }
+
+        if (code === CHAR_LEFT_CURLY_BRACE) {
+          braces++;
+          continue;
+        }
+
+        if (braceEscaped !== true && code === CHAR_DOT && (code = advance()) === CHAR_DOT) {
+          isBrace = token.isBrace = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+
+          if (scanToEnd === true) {
+            continue;
+          }
+
+          break;
+        }
+
+        if (braceEscaped !== true && code === CHAR_COMMA) {
+          isBrace = token.isBrace = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+
+          if (scanToEnd === true) {
+            continue;
+          }
+
+          break;
+        }
+
+        if (code === CHAR_RIGHT_CURLY_BRACE) {
+          braces--;
+
+          if (braces === 0) {
+            braceEscaped = false;
+            isBrace = token.isBrace = true;
+            finished = true;
+            break;
+          }
+        }
+      }
+
+      if (scanToEnd === true) {
+        continue;
+      }
+
+      break;
+    }
+
+    if (code === CHAR_FORWARD_SLASH) {
+      slashes.push(index);
+      tokens.push(token);
+      token = { value: '', depth: 0, isGlob: false };
+
+      if (finished === true) continue;
+      if (prev === CHAR_DOT && index === (start + 1)) {
+        start += 2;
+        continue;
+      }
+
+      lastIndex = index + 1;
+      continue;
+    }
+
+    if (opts.noext !== true) {
+      const isExtglobChar = code === CHAR_PLUS
+        || code === CHAR_AT
+        || code === CHAR_ASTERISK
+        || code === CHAR_QUESTION_MARK
+        || code === CHAR_EXCLAMATION_MARK;
+
+      if (isExtglobChar === true && peek() === CHAR_LEFT_PARENTHESES) {
+        isGlob = token.isGlob = true;
+        isExtglob = token.isExtglob = true;
+        finished = true;
+
+        if (scanToEnd === true) {
+          while (eos() !== true && (code = advance())) {
+            if (code === CHAR_BACKWARD_SLASH) {
+              backslashes = token.backslashes = true;
+              code = advance();
+              continue;
+            }
+
+            if (code === CHAR_RIGHT_PARENTHESES) {
+              isGlob = token.isGlob = true;
+              finished = true;
+              break;
+            }
+          }
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (code === CHAR_ASTERISK) {
+      if (prev === CHAR_ASTERISK) isGlobstar = token.isGlobstar = true;
+      isGlob = token.isGlob = true;
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+      break;
+    }
+
+    if (code === CHAR_QUESTION_MARK) {
+      isGlob = token.isGlob = true;
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+      break;
+    }
+
+    if (code === CHAR_LEFT_SQUARE_BRACKET) {
+      while (eos() !== true && (next = advance())) {
+        if (next === CHAR_BACKWARD_SLASH) {
+          backslashes = token.backslashes = true;
+          advance();
+          continue;
+        }
+
+        if (next === CHAR_RIGHT_SQUARE_BRACKET) {
+          isBracket = token.isBracket = true;
+          isGlob = token.isGlob = true;
+          finished = true;
+          break;
+        }
+      }
+
+      if (scanToEnd === true) {
+        continue;
+      }
+
+      break;
+    }
+
+    if (opts.nonegate !== true && code === CHAR_EXCLAMATION_MARK && index === start) {
+      negated = token.negated = true;
+      start++;
+      continue;
+    }
+
+    if (opts.noparen !== true && code === CHAR_LEFT_PARENTHESES) {
+      isGlob = token.isGlob = true;
+
+      if (scanToEnd === true) {
+        while (eos() !== true && (code = advance())) {
+          if (code === CHAR_LEFT_PARENTHESES) {
+            backslashes = token.backslashes = true;
+            code = advance();
+            continue;
+          }
+
+          if (code === CHAR_RIGHT_PARENTHESES) {
+            finished = true;
+            break;
+          }
+        }
+        continue;
+      }
+      break;
+    }
+
+    if (isGlob === true) {
+      finished = true;
+
+      if (scanToEnd === true) {
+        continue;
+      }
+
+      break;
+    }
+  }
+
+  if (opts.noext === true) {
+    isExtglob = false;
+    isGlob = false;
+  }
+
+  let base = str;
+  let prefix = '';
+  let glob = '';
+
+  if (start > 0) {
+    prefix = str.slice(0, start);
+    str = str.slice(start);
+    lastIndex -= start;
+  }
+
+  if (base && isGlob === true && lastIndex > 0) {
+    base = str.slice(0, lastIndex);
+    glob = str.slice(lastIndex);
+  } else if (isGlob === true) {
+    base = '';
+    glob = str;
+  } else {
+    base = str;
+  }
+
+  if (base && base !== '' && base !== '/' && base !== str) {
+    if (isPathSeparator(base.charCodeAt(base.length - 1))) {
+      base = base.slice(0, -1);
+    }
+  }
+
+  if (opts.unescape === true) {
+    if (glob) glob = utils.removeBackslashes(glob);
+
+    if (base && backslashes === true) {
+      base = utils.removeBackslashes(base);
+    }
+  }
+
+  const state = {
+    prefix,
+    input,
+    start,
+    base,
+    glob,
+    isBrace,
+    isBracket,
+    isGlob,
+    isExtglob,
+    isGlobstar,
+    negated
+  };
+
+  if (opts.tokens === true) {
+    state.maxDepth = 0;
+    if (!isPathSeparator(code)) {
+      tokens.push(token);
+    }
+    state.tokens = tokens;
+  }
+
+  if (opts.parts === true || opts.tokens === true) {
+    let prevIndex;
+
+    for (let idx = 0; idx < slashes.length; idx++) {
+      const n = prevIndex ? prevIndex + 1 : start;
+      const i = slashes[idx];
+      const value = input.slice(n, i);
+      if (opts.tokens) {
+        if (idx === 0 && start !== 0) {
+          tokens[idx].isPrefix = true;
+          tokens[idx].value = prefix;
+        } else {
+          tokens[idx].value = value;
+        }
+        depth(tokens[idx]);
+        state.maxDepth += tokens[idx].depth;
+      }
+      if (idx !== 0 || value !== '') {
+        parts.push(value);
+      }
+      prevIndex = i;
+    }
+
+    if (prevIndex && prevIndex + 1 < input.length) {
+      const value = input.slice(prevIndex + 1);
+      parts.push(value);
+
+      if (opts.tokens) {
+        tokens[tokens.length - 1].value = value;
+        depth(tokens[tokens.length - 1]);
+        state.maxDepth += tokens[tokens.length - 1].depth;
+      }
+    }
+
+    state.slashes = slashes;
+    state.parts = parts;
+  }
+
+  return state;
+};
+
+module.exports = scan;
+
+
+/***/ }),
+/* 315 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var Transform = __webpack_require__(574).Transform
+  , inherits  = __webpack_require__(669).inherits
+  , xtend     = __webpack_require__(940)
+
+function DestroyableTransform(opts) {
+  Transform.call(this, opts)
+  this._destroyed = false
+}
+
+inherits(DestroyableTransform, Transform)
+
+DestroyableTransform.prototype.destroy = function(err) {
+  if (this._destroyed) return
+  this._destroyed = true
+  
+  var self = this
+  process.nextTick(function() {
+    if (err)
+      self.emit('error', err)
+    self.emit('close')
+  })
+}
+
+// a noop _transform function
+function noop (chunk, enc, callback) {
+  callback(null, chunk)
+}
+
+
+// create a new export function, used by both the main export and
+// the .ctor export, contains common logic for dealing with arguments
+function through2 (construct) {
+  return function (options, transform, flush) {
+    if (typeof options == 'function') {
+      flush     = transform
+      transform = options
+      options   = {}
+    }
+
+    if (typeof transform != 'function')
+      transform = noop
+
+    if (typeof flush != 'function')
+      flush = null
+
+    return construct(options, transform, flush)
+  }
+}
+
+
+// main export, just make me a transform stream!
+module.exports = through2(function (options, transform, flush) {
+  var t2 = new DestroyableTransform(options)
+
+  t2._transform = transform
+
+  if (flush)
+    t2._flush = flush
+
+  return t2
+})
+
+
+// make me a reusable prototype that I can `new`, or implicitly `new`
+// with a constructor call
+module.exports.ctor = through2(function (options, transform, flush) {
+  function Through2 (override) {
+    if (!(this instanceof Through2))
+      return new Through2(override)
+
+    this.options = xtend(options, override)
+
+    DestroyableTransform.call(this, this.options)
+  }
+
+  inherits(Through2, DestroyableTransform)
+
+  Through2.prototype._transform = transform
+
+  if (flush)
+    Through2.prototype._flush = flush
+
+  return Through2
+})
+
+
+module.exports.obj = through2(function (options, transform, flush) {
+  var t2 = new DestroyableTransform(xtend({ objectMode: true, highWaterMark: 16 }, options))
+
+  t2._transform = transform
+
+  if (flush)
+    t2._flush = flush
+
+  return t2
+})
+
+
+/***/ }),
+/* 316 */,
+/* 317 */
+/***/ (function(module) {
+
+"use strict";
+
+
+var gitHosts = module.exports = {
+  github: {
+    // First two are insecure and generally shouldn't be used any more, but
+    // they are still supported.
+    'protocols': [ 'git', 'http', 'git+ssh', 'git+https', 'ssh', 'https' ],
+    'domain': 'github.com',
+    'treepath': 'tree',
+    'filetemplate': 'https://{auth@}raw.githubusercontent.com/{user}/{project}/{committish}/{path}',
+    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
+    'gittemplate': 'git://{auth@}{domain}/{user}/{project}.git{#committish}',
+    'tarballtemplate': 'https://codeload.{domain}/{user}/{project}/tar.gz/{committish}'
+  },
+  bitbucket: {
+    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
+    'domain': 'bitbucket.org',
+    'treepath': 'src',
+    'tarballtemplate': 'https://{domain}/{user}/{project}/get/{committish}.tar.gz'
+  },
+  gitlab: {
+    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
+    'domain': 'gitlab.com',
+    'treepath': 'tree',
+    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
+    'httpstemplate': 'git+https://{auth@}{domain}/{user}/{projectPath}.git{#committish}',
+    'tarballtemplate': 'https://{domain}/{user}/{project}/repository/archive.tar.gz?ref={committish}',
+    'pathmatch': /^[/]([^/]+)[/]((?!.*(\/-\/|\/repository\/archive\.tar\.gz\?=.*|\/repository\/[^/]+\/archive.tar.gz$)).*?)(?:[.]git|[/])?$/
+  },
+  gist: {
+    'protocols': [ 'git', 'git+ssh', 'git+https', 'ssh', 'https' ],
+    'domain': 'gist.github.com',
+    'pathmatch': /^[/](?:([^/]+)[/])?([a-z0-9]{32,})(?:[.]git)?$/,
+    'filetemplate': 'https://gist.githubusercontent.com/{user}/{project}/raw{/committish}/{path}',
+    'bugstemplate': 'https://{domain}/{project}',
+    'gittemplate': 'git://{domain}/{project}.git{#committish}',
+    'sshtemplate': 'git@{domain}:/{project}.git{#committish}',
+    'sshurltemplate': 'git+ssh://git@{domain}/{project}.git{#committish}',
+    'browsetemplate': 'https://{domain}/{project}{/committish}',
+    'browsefiletemplate': 'https://{domain}/{project}{/committish}{#path}',
+    'docstemplate': 'https://{domain}/{project}{/committish}',
+    'httpstemplate': 'git+https://{domain}/{project}.git{#committish}',
+    'shortcuttemplate': '{type}:{project}{#committish}',
+    'pathtemplate': '{project}{#committish}',
+    'tarballtemplate': 'https://codeload.github.com/gist/{project}/tar.gz/{committish}',
+    'hashformat': function (fragment) {
+      return 'file-' + formatHashFragment(fragment)
+    }
+  }
+}
+
+var gitHostDefaults = {
+  'sshtemplate': 'git@{domain}:{user}/{project}.git{#committish}',
+  'sshurltemplate': 'git+ssh://git@{domain}/{user}/{project}.git{#committish}',
+  'browsetemplate': 'https://{domain}/{user}/{project}{/tree/committish}',
+  'browsefiletemplate': 'https://{domain}/{user}/{project}/{treepath}/{committish}/{path}{#fragment}',
+  'docstemplate': 'https://{domain}/{user}/{project}{/tree/committish}#readme',
+  'httpstemplate': 'git+https://{auth@}{domain}/{user}/{project}.git{#committish}',
+  'filetemplate': 'https://{domain}/{user}/{project}/raw/{committish}/{path}',
+  'shortcuttemplate': '{type}:{user}/{project}{#committish}',
+  'pathtemplate': '{user}/{project}{#committish}',
+  'pathmatch': /^[/]([^/]+)[/]([^/]+?)(?:[.]git|[/])?$/,
+  'hashformat': formatHashFragment
+}
+
+Object.keys(gitHosts).forEach(function (name) {
+  Object.keys(gitHostDefaults).forEach(function (key) {
+    if (gitHosts[name][key]) return
+    gitHosts[name][key] = gitHostDefaults[key]
+  })
+  gitHosts[name].protocols_re = RegExp('^(' +
+    gitHosts[name].protocols.map(function (protocol) {
+      return protocol.replace(/([\\+*{}()[\]$^|])/g, '\\$1')
+    }).join('|') + '):$')
+})
+
+function formatHashFragment (fragment) {
+  return fragment.toLowerCase().replace(/^\W+|\/|\W+$/g, '').replace(/\W+/g, '-')
+}
+
+
+/***/ }),
+/* 318 */,
+/* 319 */,
+/* 320 */,
+/* 321 */
+/***/ (function(module) {
+
+"use strict";
+
+
+module.exports = (string, count = 1, options) => {
+	options = {
+		indent: ' ',
+		includeEmptyLines: false,
+		...options
+	};
+
+	if (typeof string !== 'string') {
+		throw new TypeError(
+			`Expected \`input\` to be a \`string\`, got \`${typeof string}\``
+		);
+	}
+
+	if (typeof count !== 'number') {
+		throw new TypeError(
+			`Expected \`count\` to be a \`number\`, got \`${typeof count}\``
+		);
+	}
+
+	if (typeof options.indent !== 'string') {
+		throw new TypeError(
+			`Expected \`options.indent\` to be a \`string\`, got \`${typeof options.indent}\``
+		);
+	}
+
+	if (count === 0) {
+		return string;
+	}
+
+	const regex = options.includeEmptyLines ? /^/gm : /^(?!\s*$)/gm;
+
+	return string.replace(regex, options.indent.repeat(count));
+};
+
+
+/***/ }),
+/* 322 */,
+/* 323 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const isStream = stream =>
+	stream !== null &&
+	typeof stream === 'object' &&
+	typeof stream.pipe === 'function';
+
+isStream.writable = stream =>
+	isStream(stream) &&
+	stream.writable !== false &&
+	typeof stream._write === 'function' &&
+	typeof stream._writableState === 'object';
+
+isStream.readable = stream =>
+	isStream(stream) &&
+	stream.readable !== false &&
+	typeof stream._read === 'function' &&
+	typeof stream._readableState === 'object';
+
+isStream.duplex = stream =>
+	isStream.writable(stream) &&
+	isStream.readable(stream);
+
+isStream.transform = stream =>
+	isStream.duplex(stream) &&
+	typeof stream._transform === 'function' &&
+	typeof stream._transformState === 'object';
+
+module.exports = isStream;
+
+
+/***/ }),
+/* 324 */,
+/* 325 */,
+/* 326 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const {escapeRegExp, size, isString} = __webpack_require__(557);
+const {SECRET_REPLACEMENT, SECRET_MIN_SIZE} = __webpack_require__(861);
+
+module.exports = (env) => {
+  const toReplace = Object.keys(env).filter((envVar) => {
+    // https://github.com/semantic-release/semantic-release/issues/1558
+    if (envVar === 'GOPRIVATE') {
+      return false;
+    }
+
+    return /token|password|credential|secret|private/i.test(envVar) && size(env[envVar].trim()) >= SECRET_MIN_SIZE;
+  });
+
+  const regexp = new RegExp(
+    toReplace.map((envVar) => `${escapeRegExp(env[envVar])}|${escapeRegExp(encodeURI(env[envVar]))}`).join('|'),
+    'g'
+  );
+  return (output) =>
+    output && isString(output) && toReplace.length > 0 ? output.toString().replace(regexp, SECRET_REPLACEMENT) : output;
+};
+
+
+/***/ }),
+/* 327 */
+/***/ (function(module) {
+
+// https://buildkite.com/docs/builds/environment-variables
+
+module.exports = {
+	detect({env}) {
+		return Boolean(env.BUILDKITE);
+	},
+	configuration({env}) {
+		const pr = env.BUILDKITE_PULL_REQUEST === 'false' ? undefined : env.BUILDKITE_PULL_REQUEST;
+		const isPr = Boolean(pr);
+
+		return {
+			name: 'Buildkite',
+			service: 'buildkite',
+			build: env.BUILDKITE_BUILD_NUMBER,
+			buildUrl: env.BUILDKITE_BUILD_URL,
+			commit: env.BUILDKITE_COMMIT,
+			tag: env.BUILDKITE_TAG,
+			branch: isPr ? env.BUILDKITE_PULL_REQUEST_BASE_BRANCH : env.BUILDKITE_BRANCH,
+			slug: `${env.BUILDKITE_ORGANIZATION_SLUG}/${env.BUILDKITE_PROJECT_SLUG}`,
+			pr,
+			isPr,
+			prBranch: isPr ? env.BUILDKITE_BRANCH : undefined,
+			root: env.BUILDKITE_BUILD_CHECKOUT_PATH,
+		};
+	},
+};
+
+
+/***/ }),
+/* 328 */,
+/* 329 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
@@ -21206,9 +25639,21 @@ function collectionFromPath(schema, path, value) {
 
   for (let i = path.length - 1; i >= 0; --i) {
     const k = path[i];
-    const o = Number.isInteger(k) && k >= 0 ? [] : {};
-    o[k] = v;
-    v = o;
+
+    if (Number.isInteger(k) && k >= 0) {
+      const a = [];
+      a[k] = v;
+      v = a;
+    } else {
+      const o = {};
+      Object.defineProperty(o, k, {
+        value: v,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      });
+      v = o;
+    }
   }
 
   return schema.createNode(v, false);
@@ -21432,7 +25877,7 @@ const stringifyKey = (key, jsKey, ctx) => {
   if (jsKey === null) return '';
   if (typeof jsKey !== 'object') return String(jsKey);
   if (key instanceof Node && ctx && ctx.doc) return key.toString({
-    anchors: {},
+    anchors: Object.create(null),
     doc: ctx.doc,
     indent: '',
     indentStep: ctx.indentStep,
@@ -21473,7 +25918,13 @@ class Pair extends Node {
       map.add(key);
     } else {
       const stringKey = stringifyKey(this.key, key, ctx);
-      map[stringKey] = toJSON(this.value, stringKey, ctx);
+      const value = toJSON(this.value, stringKey, ctx);
+      if (stringKey in map) Object.defineProperty(map, stringKey, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      });else map[stringKey] = value;
     }
 
     return map;
@@ -21508,7 +25959,7 @@ class Pair extends Node {
       }
     }
 
-    const explicitKey = !simpleKeys && (!key || keyComment || key instanceof Collection || key.type === PlainValue.Type.BLOCK_FOLDED || key.type === PlainValue.Type.BLOCK_LITERAL);
+    let explicitKey = !simpleKeys && (!key || keyComment || (key instanceof Node ? key instanceof Collection || key.type === PlainValue.Type.BLOCK_FOLDED || key.type === PlainValue.Type.BLOCK_LITERAL : typeof key === 'object'));
     const {
       doc,
       indent,
@@ -21523,13 +25974,18 @@ class Pair extends Node {
     let str = stringify(key, ctx, () => keyComment = null, () => chompKeep = true);
     str = addComment(str, ctx.indent, keyComment);
 
+    if (!explicitKey && str.length > 1024) {
+      if (simpleKeys) throw new Error('With simple keys, single line scalar must not span more than 1024 characters');
+      explicitKey = true;
+    }
+
     if (ctx.allNullValues && !simpleKeys) {
       if (this.comment) {
         str = addComment(str, ctx.indent, this.comment);
         if (onComment) onComment();
       } else if (chompKeep && !keyComment && onChompKeep) onChompKeep();
 
-      return ctx.inFlow ? str : `? ${str}`;
+      return ctx.inFlow && !explicitKey ? str : `? ${str}`;
     }
 
     str = explicitKey ? `? ${str}\n${indent}:` : `${str}:`;
@@ -21573,7 +26029,7 @@ class Pair extends Node {
     } else if (!explicitKey && value instanceof Collection) {
       const flow = valueStr[0] === '[' || valueStr[0] === '{';
       if (!flow || valueStr.includes('\n')) ws = `\n${ctx.indent}`;
-    }
+    } else if (valueStr[0] === '\n') ws = '';
 
     if (chompKeep && !valueComment && onChompKeep) onChompKeep();
     return addComment(str + ws + valueStr, ctx.indent, valueComment);
@@ -21797,8 +26253,13 @@ class Merge extends Pair {
           if (!map.has(key)) map.set(key, value);
         } else if (map instanceof Set) {
           map.add(key);
-        } else {
-          if (!Object.prototype.hasOwnProperty.call(map, key)) map[key] = value;
+        } else if (!Object.prototype.hasOwnProperty.call(map, key)) {
+          Object.defineProperty(map, key, {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true
+          });
         }
       }
     }
@@ -21898,7 +26359,7 @@ const consumeMoreIndentedLines = (text, i) => {
  *   the first line, defaulting to `indent.length`
  * @param {number} [options.lineWidth=80]
  * @param {number} [options.minContentWidth=20] Allow highly indented lines to
- *   stretch the line width
+ *   stretch the line width or indent content from the start
  * @param {function} options.onFold Called once if the text is folded
  * @param {function} options.onFold Called once if any line of text exceeds
  *   lineWidth characters
@@ -21917,11 +26378,18 @@ function foldFlowLines(text, indent, mode, {
   if (text.length <= endStep) return text;
   const folds = [];
   const escapedFolds = {};
-  let end = lineWidth - (typeof indentAtStart === 'number' ? indentAtStart : indent.length);
+  let end = lineWidth - indent.length;
+
+  if (typeof indentAtStart === 'number') {
+    if (indentAtStart > lineWidth - Math.max(2, minContentWidth)) folds.push(0);else end = lineWidth - indentAtStart;
+  }
+
   let split = undefined;
   let prev = undefined;
   let overflow = false;
   let i = -1;
+  let escStart = -1;
+  let escEnd = -1;
 
   if (mode === FOLD_BLOCK) {
     i = consumeMoreIndentedLines(text, i);
@@ -21930,6 +26398,8 @@ function foldFlowLines(text, indent, mode, {
 
   for (let ch; ch = text[i += 1];) {
     if (mode === FOLD_QUOTED && ch === '\\') {
+      escStart = i;
+
       switch (text[i + 1]) {
         case 'x':
           i += 3;
@@ -21946,6 +26416,8 @@ function foldFlowLines(text, indent, mode, {
         default:
           i += 1;
       }
+
+      escEnd = i;
     }
 
     if (ch === '\n') {
@@ -21970,12 +26442,15 @@ function foldFlowLines(text, indent, mode, {
             prev = ch;
             ch = text[i += 1];
             overflow = true;
-          } // i - 2 accounts for not-dropped last char + newline-escaping \
+          } // Account for newline escape, but don't break preceding escape
 
 
-          folds.push(i - 2);
-          escapedFolds[i - 2] = true;
-          end = i - 2 + endStep;
+          const j = i > escEnd + 1 ? i - 2 : escStart - 1; // Bail out if lineWidth & minContentWidth are shorter than an escape string
+
+          if (escapedFolds[j]) return text;
+          folds.push(j);
+          escapedFolds[j] = true;
+          end = j + endStep;
           split = undefined;
         } else {
           overflow = true;
@@ -21994,8 +26469,10 @@ function foldFlowLines(text, indent, mode, {
   for (let i = 0; i < folds.length; ++i) {
     const fold = folds[i];
     const end = folds[i + 1] || text.length;
-    if (mode === FOLD_QUOTED && escapedFolds[fold]) res += `${text[fold]}\\`;
-    res += `\n${indent}${text.slice(fold + 1, end)}`;
+    if (fold === 0) res = `\n${indent}${text.slice(0, end)}`;else {
+      if (mode === FOLD_QUOTED && escapedFolds[fold]) res += `${text[fold]}\\`;
+      res += `\n${indent}${text.slice(fold + 1, end)}`;
+    }
   }
 
   return res;
@@ -22011,7 +26488,9 @@ const getFoldOptions = ({
 
 const containsDocumentMarker = str => /^(%|---|\.\.\.)/m.test(str);
 
-function lineLengthOverLimit(str, limit) {
+function lineLengthOverLimit(str, lineWidth, indentLength) {
+  if (!lineWidth || lineWidth < 0) return false;
+  const limit = lineWidth - indentLength;
   const strLen = str.length;
   if (strLen <= limit) return false;
 
@@ -22154,7 +26633,7 @@ function blockString({
   const indent = ctx.indent || (ctx.forceBlockIndent || containsDocumentMarker(value) ? '  ' : '');
   const indentSize = indent ? '2' : '1'; // root is at -1
 
-  const literal = type === PlainValue.Type.BLOCK_FOLDED ? false : type === PlainValue.Type.BLOCK_LITERAL ? true : !lineLengthOverLimit(value, strOptions.fold.lineWidth - indent.length);
+  const literal = type === PlainValue.Type.BLOCK_FOLDED ? false : type === PlainValue.Type.BLOCK_LITERAL ? true : !lineLengthOverLimit(value, strOptions.fold.lineWidth, indent.length);
   let header = literal ? '|' : '>';
   if (!value) return header + '\n';
   let wsStart = '';
@@ -23270,4262 +27749,7 @@ exports.toJSON = toJSON;
 
 
 /***/ }),
-/* 233 */,
-/* 234 */,
-/* 235 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const callsites = __webpack_require__(253);
-
-module.exports = filepath => {
-	const stacks = callsites();
-
-	if (!filepath) {
-		return stacks[2].getFileName();
-	}
-
-	let seenVal = false;
-
-	// Skip the first stack as it's this function
-	stacks.shift();
-
-	for (const stack of stacks) {
-		const parentFilepath = stack.getFileName();
-
-		if (typeof parentFilepath !== 'string') {
-			continue;
-		}
-
-		if (parentFilepath === filepath) {
-			seenVal = true;
-			continue;
-		}
-
-		// Skip native modules
-		if (parentFilepath === 'module.js') {
-			continue;
-		}
-
-		if (seenVal && parentFilepath !== filepath) {
-			return parentFilepath;
-		}
-	}
-};
-
-
-/***/ }),
-/* 236 */
-/***/ (function(module) {
-
-/**
- * lodash (Custom Build) <https://lodash.com/>
- * Build: `lodash modularize exports="npm" -o ./`
- * Copyright jQuery Foundation and other contributors <https://jquery.org/>
- * Released under MIT license <https://lodash.com/license>
- * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
- * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
- */
-
-/** Used as references for various `Number` constants. */
-var MAX_SAFE_INTEGER = 9007199254740991;
-
-/** `Object#toString` result references. */
-var argsTag = '[object Arguments]',
-    funcTag = '[object Function]',
-    genTag = '[object GeneratorFunction]',
-    mapTag = '[object Map]',
-    objectTag = '[object Object]',
-    promiseTag = '[object Promise]',
-    setTag = '[object Set]',
-    stringTag = '[object String]',
-    weakMapTag = '[object WeakMap]';
-
-var dataViewTag = '[object DataView]';
-
-/**
- * Used to match `RegExp`
- * [syntax characters](http://ecma-international.org/ecma-262/7.0/#sec-patterns).
- */
-var reRegExpChar = /[\\^$.*+?()[\]{}|]/g;
-
-/** Used to detect host constructors (Safari). */
-var reIsHostCtor = /^\[object .+?Constructor\]$/;
-
-/** Used to detect unsigned integer values. */
-var reIsUint = /^(?:0|[1-9]\d*)$/;
-
-/** Used to compose unicode character classes. */
-var rsAstralRange = '\\ud800-\\udfff',
-    rsComboMarksRange = '\\u0300-\\u036f\\ufe20-\\ufe23',
-    rsComboSymbolsRange = '\\u20d0-\\u20f0',
-    rsVarRange = '\\ufe0e\\ufe0f';
-
-/** Used to compose unicode capture groups. */
-var rsAstral = '[' + rsAstralRange + ']',
-    rsCombo = '[' + rsComboMarksRange + rsComboSymbolsRange + ']',
-    rsFitz = '\\ud83c[\\udffb-\\udfff]',
-    rsModifier = '(?:' + rsCombo + '|' + rsFitz + ')',
-    rsNonAstral = '[^' + rsAstralRange + ']',
-    rsRegional = '(?:\\ud83c[\\udde6-\\uddff]){2}',
-    rsSurrPair = '[\\ud800-\\udbff][\\udc00-\\udfff]',
-    rsZWJ = '\\u200d';
-
-/** Used to compose unicode regexes. */
-var reOptMod = rsModifier + '?',
-    rsOptVar = '[' + rsVarRange + ']?',
-    rsOptJoin = '(?:' + rsZWJ + '(?:' + [rsNonAstral, rsRegional, rsSurrPair].join('|') + ')' + rsOptVar + reOptMod + ')*',
-    rsSeq = rsOptVar + reOptMod + rsOptJoin,
-    rsSymbol = '(?:' + [rsNonAstral + rsCombo + '?', rsCombo, rsRegional, rsSurrPair, rsAstral].join('|') + ')';
-
-/** Used to match [string symbols](https://mathiasbynens.be/notes/javascript-unicode). */
-var reUnicode = RegExp(rsFitz + '(?=' + rsFitz + ')|' + rsSymbol + rsSeq, 'g');
-
-/** Used to detect strings with [zero-width joiners or code points from the astral planes](http://eev.ee/blog/2015/09/12/dark-corners-of-unicode/). */
-var reHasUnicode = RegExp('[' + rsZWJ + rsAstralRange  + rsComboMarksRange + rsComboSymbolsRange + rsVarRange + ']');
-
-/** Detect free variable `global` from Node.js. */
-var freeGlobal = typeof global == 'object' && global && global.Object === Object && global;
-
-/** Detect free variable `self`. */
-var freeSelf = typeof self == 'object' && self && self.Object === Object && self;
-
-/** Used as a reference to the global object. */
-var root = freeGlobal || freeSelf || Function('return this')();
-
-/**
- * A specialized version of `_.map` for arrays without support for iteratee
- * shorthands.
- *
- * @private
- * @param {Array} [array] The array to iterate over.
- * @param {Function} iteratee The function invoked per iteration.
- * @returns {Array} Returns the new mapped array.
- */
-function arrayMap(array, iteratee) {
-  var index = -1,
-      length = array ? array.length : 0,
-      result = Array(length);
-
-  while (++index < length) {
-    result[index] = iteratee(array[index], index, array);
-  }
-  return result;
-}
-
-/**
- * Converts an ASCII `string` to an array.
- *
- * @private
- * @param {string} string The string to convert.
- * @returns {Array} Returns the converted array.
- */
-function asciiToArray(string) {
-  return string.split('');
-}
-
-/**
- * The base implementation of `_.times` without support for iteratee shorthands
- * or max array length checks.
- *
- * @private
- * @param {number} n The number of times to invoke `iteratee`.
- * @param {Function} iteratee The function invoked per iteration.
- * @returns {Array} Returns the array of results.
- */
-function baseTimes(n, iteratee) {
-  var index = -1,
-      result = Array(n);
-
-  while (++index < n) {
-    result[index] = iteratee(index);
-  }
-  return result;
-}
-
-/**
- * The base implementation of `_.values` and `_.valuesIn` which creates an
- * array of `object` property values corresponding to the property names
- * of `props`.
- *
- * @private
- * @param {Object} object The object to query.
- * @param {Array} props The property names to get values for.
- * @returns {Object} Returns the array of property values.
- */
-function baseValues(object, props) {
-  return arrayMap(props, function(key) {
-    return object[key];
-  });
-}
-
-/**
- * Gets the value at `key` of `object`.
- *
- * @private
- * @param {Object} [object] The object to query.
- * @param {string} key The key of the property to get.
- * @returns {*} Returns the property value.
- */
-function getValue(object, key) {
-  return object == null ? undefined : object[key];
-}
-
-/**
- * Checks if `string` contains Unicode symbols.
- *
- * @private
- * @param {string} string The string to inspect.
- * @returns {boolean} Returns `true` if a symbol is found, else `false`.
- */
-function hasUnicode(string) {
-  return reHasUnicode.test(string);
-}
-
-/**
- * Checks if `value` is a host object in IE < 9.
- *
- * @private
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a host object, else `false`.
- */
-function isHostObject(value) {
-  // Many host objects are `Object` objects that can coerce to strings
-  // despite having improperly defined `toString` methods.
-  var result = false;
-  if (value != null && typeof value.toString != 'function') {
-    try {
-      result = !!(value + '');
-    } catch (e) {}
-  }
-  return result;
-}
-
-/**
- * Converts `iterator` to an array.
- *
- * @private
- * @param {Object} iterator The iterator to convert.
- * @returns {Array} Returns the converted array.
- */
-function iteratorToArray(iterator) {
-  var data,
-      result = [];
-
-  while (!(data = iterator.next()).done) {
-    result.push(data.value);
-  }
-  return result;
-}
-
-/**
- * Converts `map` to its key-value pairs.
- *
- * @private
- * @param {Object} map The map to convert.
- * @returns {Array} Returns the key-value pairs.
- */
-function mapToArray(map) {
-  var index = -1,
-      result = Array(map.size);
-
-  map.forEach(function(value, key) {
-    result[++index] = [key, value];
-  });
-  return result;
-}
-
-/**
- * Creates a unary function that invokes `func` with its argument transformed.
- *
- * @private
- * @param {Function} func The function to wrap.
- * @param {Function} transform The argument transform.
- * @returns {Function} Returns the new function.
- */
-function overArg(func, transform) {
-  return function(arg) {
-    return func(transform(arg));
-  };
-}
-
-/**
- * Converts `set` to an array of its values.
- *
- * @private
- * @param {Object} set The set to convert.
- * @returns {Array} Returns the values.
- */
-function setToArray(set) {
-  var index = -1,
-      result = Array(set.size);
-
-  set.forEach(function(value) {
-    result[++index] = value;
-  });
-  return result;
-}
-
-/**
- * Converts `string` to an array.
- *
- * @private
- * @param {string} string The string to convert.
- * @returns {Array} Returns the converted array.
- */
-function stringToArray(string) {
-  return hasUnicode(string)
-    ? unicodeToArray(string)
-    : asciiToArray(string);
-}
-
-/**
- * Converts a Unicode `string` to an array.
- *
- * @private
- * @param {string} string The string to convert.
- * @returns {Array} Returns the converted array.
- */
-function unicodeToArray(string) {
-  return string.match(reUnicode) || [];
-}
-
-/** Used for built-in method references. */
-var funcProto = Function.prototype,
-    objectProto = Object.prototype;
-
-/** Used to detect overreaching core-js shims. */
-var coreJsData = root['__core-js_shared__'];
-
-/** Used to detect methods masquerading as native. */
-var maskSrcKey = (function() {
-  var uid = /[^.]+$/.exec(coreJsData && coreJsData.keys && coreJsData.keys.IE_PROTO || '');
-  return uid ? ('Symbol(src)_1.' + uid) : '';
-}());
-
-/** Used to resolve the decompiled source of functions. */
-var funcToString = funcProto.toString;
-
-/** Used to check objects for own properties. */
-var hasOwnProperty = objectProto.hasOwnProperty;
-
-/**
- * Used to resolve the
- * [`toStringTag`](http://ecma-international.org/ecma-262/7.0/#sec-object.prototype.tostring)
- * of values.
- */
-var objectToString = objectProto.toString;
-
-/** Used to detect if a method is native. */
-var reIsNative = RegExp('^' +
-  funcToString.call(hasOwnProperty).replace(reRegExpChar, '\\$&')
-  .replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, '$1.*?') + '$'
-);
-
-/** Built-in value references. */
-var Symbol = root.Symbol,
-    iteratorSymbol = Symbol ? Symbol.iterator : undefined,
-    propertyIsEnumerable = objectProto.propertyIsEnumerable;
-
-/* Built-in method references for those with the same name as other `lodash` methods. */
-var nativeKeys = overArg(Object.keys, Object);
-
-/* Built-in method references that are verified to be native. */
-var DataView = getNative(root, 'DataView'),
-    Map = getNative(root, 'Map'),
-    Promise = getNative(root, 'Promise'),
-    Set = getNative(root, 'Set'),
-    WeakMap = getNative(root, 'WeakMap');
-
-/** Used to detect maps, sets, and weakmaps. */
-var dataViewCtorString = toSource(DataView),
-    mapCtorString = toSource(Map),
-    promiseCtorString = toSource(Promise),
-    setCtorString = toSource(Set),
-    weakMapCtorString = toSource(WeakMap);
-
-/**
- * Creates an array of the enumerable property names of the array-like `value`.
- *
- * @private
- * @param {*} value The value to query.
- * @param {boolean} inherited Specify returning inherited property names.
- * @returns {Array} Returns the array of property names.
- */
-function arrayLikeKeys(value, inherited) {
-  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
-  // Safari 9 makes `arguments.length` enumerable in strict mode.
-  var result = (isArray(value) || isArguments(value))
-    ? baseTimes(value.length, String)
-    : [];
-
-  var length = result.length,
-      skipIndexes = !!length;
-
-  for (var key in value) {
-    if ((inherited || hasOwnProperty.call(value, key)) &&
-        !(skipIndexes && (key == 'length' || isIndex(key, length)))) {
-      result.push(key);
-    }
-  }
-  return result;
-}
-
-/**
- * The base implementation of `getTag`.
- *
- * @private
- * @param {*} value The value to query.
- * @returns {string} Returns the `toStringTag`.
- */
-function baseGetTag(value) {
-  return objectToString.call(value);
-}
-
-/**
- * The base implementation of `_.isNative` without bad shim checks.
- *
- * @private
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a native function,
- *  else `false`.
- */
-function baseIsNative(value) {
-  if (!isObject(value) || isMasked(value)) {
-    return false;
-  }
-  var pattern = (isFunction(value) || isHostObject(value)) ? reIsNative : reIsHostCtor;
-  return pattern.test(toSource(value));
-}
-
-/**
- * The base implementation of `_.keys` which doesn't treat sparse arrays as dense.
- *
- * @private
- * @param {Object} object The object to query.
- * @returns {Array} Returns the array of property names.
- */
-function baseKeys(object) {
-  if (!isPrototype(object)) {
-    return nativeKeys(object);
-  }
-  var result = [];
-  for (var key in Object(object)) {
-    if (hasOwnProperty.call(object, key) && key != 'constructor') {
-      result.push(key);
-    }
-  }
-  return result;
-}
-
-/**
- * Copies the values of `source` to `array`.
- *
- * @private
- * @param {Array} source The array to copy values from.
- * @param {Array} [array=[]] The array to copy values to.
- * @returns {Array} Returns `array`.
- */
-function copyArray(source, array) {
-  var index = -1,
-      length = source.length;
-
-  array || (array = Array(length));
-  while (++index < length) {
-    array[index] = source[index];
-  }
-  return array;
-}
-
-/**
- * Gets the native function at `key` of `object`.
- *
- * @private
- * @param {Object} object The object to query.
- * @param {string} key The key of the method to get.
- * @returns {*} Returns the function if it's native, else `undefined`.
- */
-function getNative(object, key) {
-  var value = getValue(object, key);
-  return baseIsNative(value) ? value : undefined;
-}
-
-/**
- * Gets the `toStringTag` of `value`.
- *
- * @private
- * @param {*} value The value to query.
- * @returns {string} Returns the `toStringTag`.
- */
-var getTag = baseGetTag;
-
-// Fallback for data views, maps, sets, and weak maps in IE 11,
-// for data views in Edge < 14, and promises in Node.js.
-if ((DataView && getTag(new DataView(new ArrayBuffer(1))) != dataViewTag) ||
-    (Map && getTag(new Map) != mapTag) ||
-    (Promise && getTag(Promise.resolve()) != promiseTag) ||
-    (Set && getTag(new Set) != setTag) ||
-    (WeakMap && getTag(new WeakMap) != weakMapTag)) {
-  getTag = function(value) {
-    var result = objectToString.call(value),
-        Ctor = result == objectTag ? value.constructor : undefined,
-        ctorString = Ctor ? toSource(Ctor) : undefined;
-
-    if (ctorString) {
-      switch (ctorString) {
-        case dataViewCtorString: return dataViewTag;
-        case mapCtorString: return mapTag;
-        case promiseCtorString: return promiseTag;
-        case setCtorString: return setTag;
-        case weakMapCtorString: return weakMapTag;
-      }
-    }
-    return result;
-  };
-}
-
-/**
- * Checks if `value` is a valid array-like index.
- *
- * @private
- * @param {*} value The value to check.
- * @param {number} [length=MAX_SAFE_INTEGER] The upper bounds of a valid index.
- * @returns {boolean} Returns `true` if `value` is a valid index, else `false`.
- */
-function isIndex(value, length) {
-  length = length == null ? MAX_SAFE_INTEGER : length;
-  return !!length &&
-    (typeof value == 'number' || reIsUint.test(value)) &&
-    (value > -1 && value % 1 == 0 && value < length);
-}
-
-/**
- * Checks if `func` has its source masked.
- *
- * @private
- * @param {Function} func The function to check.
- * @returns {boolean} Returns `true` if `func` is masked, else `false`.
- */
-function isMasked(func) {
-  return !!maskSrcKey && (maskSrcKey in func);
-}
-
-/**
- * Checks if `value` is likely a prototype object.
- *
- * @private
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a prototype, else `false`.
- */
-function isPrototype(value) {
-  var Ctor = value && value.constructor,
-      proto = (typeof Ctor == 'function' && Ctor.prototype) || objectProto;
-
-  return value === proto;
-}
-
-/**
- * Converts `func` to its source code.
- *
- * @private
- * @param {Function} func The function to process.
- * @returns {string} Returns the source code.
- */
-function toSource(func) {
-  if (func != null) {
-    try {
-      return funcToString.call(func);
-    } catch (e) {}
-    try {
-      return (func + '');
-    } catch (e) {}
-  }
-  return '';
-}
-
-/**
- * Checks if `value` is likely an `arguments` object.
- *
- * @static
- * @memberOf _
- * @since 0.1.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is an `arguments` object,
- *  else `false`.
- * @example
- *
- * _.isArguments(function() { return arguments; }());
- * // => true
- *
- * _.isArguments([1, 2, 3]);
- * // => false
- */
-function isArguments(value) {
-  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
-  return isArrayLikeObject(value) && hasOwnProperty.call(value, 'callee') &&
-    (!propertyIsEnumerable.call(value, 'callee') || objectToString.call(value) == argsTag);
-}
-
-/**
- * Checks if `value` is classified as an `Array` object.
- *
- * @static
- * @memberOf _
- * @since 0.1.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is an array, else `false`.
- * @example
- *
- * _.isArray([1, 2, 3]);
- * // => true
- *
- * _.isArray(document.body.children);
- * // => false
- *
- * _.isArray('abc');
- * // => false
- *
- * _.isArray(_.noop);
- * // => false
- */
-var isArray = Array.isArray;
-
-/**
- * Checks if `value` is array-like. A value is considered array-like if it's
- * not a function and has a `value.length` that's an integer greater than or
- * equal to `0` and less than or equal to `Number.MAX_SAFE_INTEGER`.
- *
- * @static
- * @memberOf _
- * @since 4.0.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is array-like, else `false`.
- * @example
- *
- * _.isArrayLike([1, 2, 3]);
- * // => true
- *
- * _.isArrayLike(document.body.children);
- * // => true
- *
- * _.isArrayLike('abc');
- * // => true
- *
- * _.isArrayLike(_.noop);
- * // => false
- */
-function isArrayLike(value) {
-  return value != null && isLength(value.length) && !isFunction(value);
-}
-
-/**
- * This method is like `_.isArrayLike` except that it also checks if `value`
- * is an object.
- *
- * @static
- * @memberOf _
- * @since 4.0.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is an array-like object,
- *  else `false`.
- * @example
- *
- * _.isArrayLikeObject([1, 2, 3]);
- * // => true
- *
- * _.isArrayLikeObject(document.body.children);
- * // => true
- *
- * _.isArrayLikeObject('abc');
- * // => false
- *
- * _.isArrayLikeObject(_.noop);
- * // => false
- */
-function isArrayLikeObject(value) {
-  return isObjectLike(value) && isArrayLike(value);
-}
-
-/**
- * Checks if `value` is classified as a `Function` object.
- *
- * @static
- * @memberOf _
- * @since 0.1.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a function, else `false`.
- * @example
- *
- * _.isFunction(_);
- * // => true
- *
- * _.isFunction(/abc/);
- * // => false
- */
-function isFunction(value) {
-  // The use of `Object#toString` avoids issues with the `typeof` operator
-  // in Safari 8-9 which returns 'object' for typed array and other constructors.
-  var tag = isObject(value) ? objectToString.call(value) : '';
-  return tag == funcTag || tag == genTag;
-}
-
-/**
- * Checks if `value` is a valid array-like length.
- *
- * **Note:** This method is loosely based on
- * [`ToLength`](http://ecma-international.org/ecma-262/7.0/#sec-tolength).
- *
- * @static
- * @memberOf _
- * @since 4.0.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a valid length, else `false`.
- * @example
- *
- * _.isLength(3);
- * // => true
- *
- * _.isLength(Number.MIN_VALUE);
- * // => false
- *
- * _.isLength(Infinity);
- * // => false
- *
- * _.isLength('3');
- * // => false
- */
-function isLength(value) {
-  return typeof value == 'number' &&
-    value > -1 && value % 1 == 0 && value <= MAX_SAFE_INTEGER;
-}
-
-/**
- * Checks if `value` is the
- * [language type](http://www.ecma-international.org/ecma-262/7.0/#sec-ecmascript-language-types)
- * of `Object`. (e.g. arrays, functions, objects, regexes, `new Number(0)`, and `new String('')`)
- *
- * @static
- * @memberOf _
- * @since 0.1.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is an object, else `false`.
- * @example
- *
- * _.isObject({});
- * // => true
- *
- * _.isObject([1, 2, 3]);
- * // => true
- *
- * _.isObject(_.noop);
- * // => true
- *
- * _.isObject(null);
- * // => false
- */
-function isObject(value) {
-  var type = typeof value;
-  return !!value && (type == 'object' || type == 'function');
-}
-
-/**
- * Checks if `value` is object-like. A value is object-like if it's not `null`
- * and has a `typeof` result of "object".
- *
- * @static
- * @memberOf _
- * @since 4.0.0
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is object-like, else `false`.
- * @example
- *
- * _.isObjectLike({});
- * // => true
- *
- * _.isObjectLike([1, 2, 3]);
- * // => true
- *
- * _.isObjectLike(_.noop);
- * // => false
- *
- * _.isObjectLike(null);
- * // => false
- */
-function isObjectLike(value) {
-  return !!value && typeof value == 'object';
-}
-
-/**
- * Checks if `value` is classified as a `String` primitive or object.
- *
- * @static
- * @since 0.1.0
- * @memberOf _
- * @category Lang
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a string, else `false`.
- * @example
- *
- * _.isString('abc');
- * // => true
- *
- * _.isString(1);
- * // => false
- */
-function isString(value) {
-  return typeof value == 'string' ||
-    (!isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag);
-}
-
-/**
- * Converts `value` to an array.
- *
- * @static
- * @since 0.1.0
- * @memberOf _
- * @category Lang
- * @param {*} value The value to convert.
- * @returns {Array} Returns the converted array.
- * @example
- *
- * _.toArray({ 'a': 1, 'b': 2 });
- * // => [1, 2]
- *
- * _.toArray('abc');
- * // => ['a', 'b', 'c']
- *
- * _.toArray(1);
- * // => []
- *
- * _.toArray(null);
- * // => []
- */
-function toArray(value) {
-  if (!value) {
-    return [];
-  }
-  if (isArrayLike(value)) {
-    return isString(value) ? stringToArray(value) : copyArray(value);
-  }
-  if (iteratorSymbol && value[iteratorSymbol]) {
-    return iteratorToArray(value[iteratorSymbol]());
-  }
-  var tag = getTag(value),
-      func = tag == mapTag ? mapToArray : (tag == setTag ? setToArray : values);
-
-  return func(value);
-}
-
-/**
- * Creates an array of the own enumerable property names of `object`.
- *
- * **Note:** Non-object values are coerced to objects. See the
- * [ES spec](http://ecma-international.org/ecma-262/7.0/#sec-object.keys)
- * for more details.
- *
- * @static
- * @since 0.1.0
- * @memberOf _
- * @category Object
- * @param {Object} object The object to query.
- * @returns {Array} Returns the array of property names.
- * @example
- *
- * function Foo() {
- *   this.a = 1;
- *   this.b = 2;
- * }
- *
- * Foo.prototype.c = 3;
- *
- * _.keys(new Foo);
- * // => ['a', 'b'] (iteration order is not guaranteed)
- *
- * _.keys('hi');
- * // => ['0', '1']
- */
-function keys(object) {
-  return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
-}
-
-/**
- * Creates an array of the own enumerable string keyed property values of `object`.
- *
- * **Note:** Non-object values are coerced to objects.
- *
- * @static
- * @since 0.1.0
- * @memberOf _
- * @category Object
- * @param {Object} object The object to query.
- * @returns {Array} Returns the array of property values.
- * @example
- *
- * function Foo() {
- *   this.a = 1;
- *   this.b = 2;
- * }
- *
- * Foo.prototype.c = 3;
- *
- * _.values(new Foo);
- * // => [1, 2] (iteration order is not guaranteed)
- *
- * _.values('hi');
- * // => ['h', 'i']
- */
-function values(object) {
-  return object ? baseValues(object, keys(object)) : [];
-}
-
-module.exports = toArray;
-
-
-/***/ }),
-/* 237 */,
-/* 238 */,
-/* 239 */,
-/* 240 */,
-/* 241 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const pLimit = __webpack_require__(599);
-
-class EndError extends Error {
-	constructor(value) {
-		super();
-		this.value = value;
-	}
-}
-
-// The input can also be a promise, so we await it
-const testElement = async (element, tester) => tester(await element);
-
-// The input can also be a promise, so we `Promise.all()` them both
-const finder = async element => {
-	const values = await Promise.all(element);
-	if (values[1] === true) {
-		throw new EndError(values[0]);
-	}
-
-	return false;
-};
-
-const pLocate = async (iterable, tester, options) => {
-	options = {
-		concurrency: Infinity,
-		preserveOrder: true,
-		...options
-	};
-
-	const limit = pLimit(options.concurrency);
-
-	// Start all the promises concurrently with optional limit
-	const items = [...iterable].map(element => [element, limit(testElement, element, tester)]);
-
-	// Check the promises either serially or concurrently
-	const checkLimit = pLimit(options.preserveOrder ? 1 : Infinity);
-
-	try {
-		await Promise.all(items.map(element => checkLimit(finder, element)));
-	} catch (error) {
-		if (error instanceof EndError) {
-			return error.value;
-		}
-
-		throw error;
-	}
-};
-
-module.exports = pLocate;
-// TODO: Remove this for the next major release
-module.exports.default = pLocate;
-
-
-/***/ }),
-/* 242 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const {isNil, uniqBy} = __webpack_require__(557);
-const semver = __webpack_require__(876);
-const {isMaintenanceRange} = __webpack_require__(946);
-
-const maintenance = {
-  filter: ({name, range}) => (!isNil(range) && range !== false) || isMaintenanceRange(name),
-  branchValidator: ({range}) => (isNil(range) ? true : isMaintenanceRange(range)),
-  branchesValidator: (branches) => uniqBy(branches, ({range}) => semver.validRange(range)).length === branches.length,
-};
-
-const prerelease = {
-  filter: ({prerelease}) => !isNil(prerelease) && prerelease !== false,
-  branchValidator: ({name, prerelease}) =>
-    Boolean(prerelease) && Boolean(semver.valid(`1.0.0-${prerelease === true ? name : prerelease}.1`)),
-  branchesValidator: (branches) => uniqBy(branches, 'prerelease').length === branches.length,
-};
-
-const release = {
-  filter: (branch) => !maintenance.filter(branch) && !prerelease.filter(branch),
-  branchesValidator: (branches) => branches.length <= 3 && branches.length > 0,
-};
-
-module.exports = {maintenance, prerelease, release};
-
-
-/***/ }),
-/* 243 */,
-/* 244 */,
-/* 245 */,
-/* 246 */,
-/* 247 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const os = __webpack_require__(87);
-const tty = __webpack_require__(867);
-const hasFlag = __webpack_require__(364);
-
-const {env} = process;
-
-let forceColor;
-if (hasFlag('no-color') ||
-	hasFlag('no-colors') ||
-	hasFlag('color=false') ||
-	hasFlag('color=never')) {
-	forceColor = 0;
-} else if (hasFlag('color') ||
-	hasFlag('colors') ||
-	hasFlag('color=true') ||
-	hasFlag('color=always')) {
-	forceColor = 1;
-}
-
-if ('FORCE_COLOR' in env) {
-	if (env.FORCE_COLOR === 'true') {
-		forceColor = 1;
-	} else if (env.FORCE_COLOR === 'false') {
-		forceColor = 0;
-	} else {
-		forceColor = env.FORCE_COLOR.length === 0 ? 1 : Math.min(parseInt(env.FORCE_COLOR, 10), 3);
-	}
-}
-
-function translateLevel(level) {
-	if (level === 0) {
-		return false;
-	}
-
-	return {
-		level,
-		hasBasic: true,
-		has256: level >= 2,
-		has16m: level >= 3
-	};
-}
-
-function supportsColor(haveStream, streamIsTTY) {
-	if (forceColor === 0) {
-		return 0;
-	}
-
-	if (hasFlag('color=16m') ||
-		hasFlag('color=full') ||
-		hasFlag('color=truecolor')) {
-		return 3;
-	}
-
-	if (hasFlag('color=256')) {
-		return 2;
-	}
-
-	if (haveStream && !streamIsTTY && forceColor === undefined) {
-		return 0;
-	}
-
-	const min = forceColor || 0;
-
-	if (env.TERM === 'dumb') {
-		return min;
-	}
-
-	if (process.platform === 'win32') {
-		// Windows 10 build 10586 is the first Windows release that supports 256 colors.
-		// Windows 10 build 14931 is the first release that supports 16m/TrueColor.
-		const osRelease = os.release().split('.');
-		if (
-			Number(osRelease[0]) >= 10 &&
-			Number(osRelease[2]) >= 10586
-		) {
-			return Number(osRelease[2]) >= 14931 ? 3 : 2;
-		}
-
-		return 1;
-	}
-
-	if ('CI' in env) {
-		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
-			return 1;
-		}
-
-		return min;
-	}
-
-	if ('TEAMCITY_VERSION' in env) {
-		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
-	}
-
-	if ('GITHUB_ACTIONS' in env) {
-		return 1;
-	}
-
-	if (env.COLORTERM === 'truecolor') {
-		return 3;
-	}
-
-	if ('TERM_PROGRAM' in env) {
-		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
-
-		switch (env.TERM_PROGRAM) {
-			case 'iTerm.app':
-				return version >= 3 ? 3 : 2;
-			case 'Apple_Terminal':
-				return 2;
-			// No default
-		}
-	}
-
-	if (/-256(color)?$/i.test(env.TERM)) {
-		return 2;
-	}
-
-	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-		return 1;
-	}
-
-	if ('COLORTERM' in env) {
-		return 1;
-	}
-
-	return min;
-}
-
-function getSupportLevel(stream) {
-	const level = supportsColor(stream, stream && stream.isTTY);
-	return translateLevel(level);
-}
-
-module.exports = {
-	supportsColor: getSupportLevel,
-	stdout: translateLevel(supportsColor(true, tty.isatty(1))),
-	stderr: translateLevel(supportsColor(true, tty.isatty(2)))
-};
-
-
-/***/ }),
-/* 248 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const {
-  noopTest,
-  edit,
-  merge
-} = __webpack_require__(345);
-
-/**
- * Block-Level Grammar
- */
-const block = {
-  newline: /^\n+/,
-  code: /^( {4}[^\n]+\n*)+/,
-  fences: /^ {0,3}(`{3,}(?=[^`\n]*\n)|~{3,})([^\n]*)\n(?:|([\s\S]*?)\n)(?: {0,3}\1[~`]* *(?:\n+|$)|$)/,
-  hr: /^ {0,3}((?:- *){3,}|(?:_ *){3,}|(?:\* *){3,})(?:\n+|$)/,
-  heading: /^ {0,3}(#{1,6}) +([^\n]*?)(?: +#+)? *(?:\n+|$)/,
-  blockquote: /^( {0,3}> ?(paragraph|[^\n]*)(?:\n|$))+/,
-  list: /^( {0,3})(bull) [\s\S]+?(?:hr|def|\n{2,}(?! )(?!\1bull )\n*|\s*$)/,
-  html: '^ {0,3}(?:' // optional indentation
-    + '<(script|pre|style)[\\s>][\\s\\S]*?(?:</\\1>[^\\n]*\\n+|$)' // (1)
-    + '|comment[^\\n]*(\\n+|$)' // (2)
-    + '|<\\?[\\s\\S]*?\\?>\\n*' // (3)
-    + '|<![A-Z][\\s\\S]*?>\\n*' // (4)
-    + '|<!\\[CDATA\\[[\\s\\S]*?\\]\\]>\\n*' // (5)
-    + '|</?(tag)(?: +|\\n|/?>)[\\s\\S]*?(?:\\n{2,}|$)' // (6)
-    + '|<(?!script|pre|style)([a-z][\\w-]*)(?:attribute)*? */?>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:\\n{2,}|$)' // (7) open tag
-    + '|</(?!script|pre|style)[a-z][\\w-]*\\s*>(?=[ \\t]*(?:\\n|$))[\\s\\S]*?(?:\\n{2,}|$)' // (7) closing tag
-    + ')',
-  def: /^ {0,3}\[(label)\]: *\n? *<?([^\s>]+)>?(?:(?: +\n? *| *\n *)(title))? *(?:\n+|$)/,
-  nptable: noopTest,
-  table: noopTest,
-  lheading: /^([^\n]+)\n {0,3}(=+|-+) *(?:\n+|$)/,
-  // regex template, placeholders will be replaced according to different paragraph
-  // interruption rules of commonmark and the original markdown spec:
-  _paragraph: /^([^\n]+(?:\n(?!hr|heading|lheading|blockquote|fences|list|html)[^\n]+)*)/,
-  text: /^[^\n]+/
-};
-
-block._label = /(?!\s*\])(?:\\[\[\]]|[^\[\]])+/;
-block._title = /(?:"(?:\\"?|[^"\\])*"|'[^'\n]*(?:\n[^'\n]+)*\n?'|\([^()]*\))/;
-block.def = edit(block.def)
-  .replace('label', block._label)
-  .replace('title', block._title)
-  .getRegex();
-
-block.bullet = /(?:[*+-]|\d{1,9}[.)])/;
-block.item = /^( *)(bull) ?[^\n]*(?:\n(?!\1bull ?)[^\n]*)*/;
-block.item = edit(block.item, 'gm')
-  .replace(/bull/g, block.bullet)
-  .getRegex();
-
-block.list = edit(block.list)
-  .replace(/bull/g, block.bullet)
-  .replace('hr', '\\n+(?=\\1?(?:(?:- *){3,}|(?:_ *){3,}|(?:\\* *){3,})(?:\\n+|$))')
-  .replace('def', '\\n+(?=' + block.def.source + ')')
-  .getRegex();
-
-block._tag = 'address|article|aside|base|basefont|blockquote|body|caption'
-  + '|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption'
-  + '|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe'
-  + '|legend|li|link|main|menu|menuitem|meta|nav|noframes|ol|optgroup|option'
-  + '|p|param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr'
-  + '|track|ul';
-block._comment = /<!--(?!-?>)[\s\S]*?-->/;
-block.html = edit(block.html, 'i')
-  .replace('comment', block._comment)
-  .replace('tag', block._tag)
-  .replace('attribute', / +[a-zA-Z:_][\w.:-]*(?: *= *"[^"\n]*"| *= *'[^'\n]*'| *= *[^\s"'=<>`]+)?/)
-  .getRegex();
-
-block.paragraph = edit(block._paragraph)
-  .replace('hr', block.hr)
-  .replace('heading', ' {0,3}#{1,6} ')
-  .replace('|lheading', '') // setex headings don't interrupt commonmark paragraphs
-  .replace('blockquote', ' {0,3}>')
-  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
-  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
-  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
-  .replace('tag', block._tag) // pars can be interrupted by type (6) html blocks
-  .getRegex();
-
-block.blockquote = edit(block.blockquote)
-  .replace('paragraph', block.paragraph)
-  .getRegex();
-
-/**
- * Normal Block Grammar
- */
-
-block.normal = merge({}, block);
-
-/**
- * GFM Block Grammar
- */
-
-block.gfm = merge({}, block.normal, {
-  nptable: '^ *([^|\\n ].*\\|.*)\\n' // Header
-    + ' *([-:]+ *\\|[-| :]*)' // Align
-    + '(?:\\n((?:(?!\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)', // Cells
-  table: '^ *\\|(.+)\\n' // Header
-    + ' *\\|?( *[-:]+[-| :]*)' // Align
-    + '(?:\\n *((?:(?!\\n|hr|heading|blockquote|code|fences|list|html).*(?:\\n|$))*)\\n*|$)' // Cells
-});
-
-block.gfm.nptable = edit(block.gfm.nptable)
-  .replace('hr', block.hr)
-  .replace('heading', ' {0,3}#{1,6} ')
-  .replace('blockquote', ' {0,3}>')
-  .replace('code', ' {4}[^\\n]')
-  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
-  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
-  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
-  .replace('tag', block._tag) // tables can be interrupted by type (6) html blocks
-  .getRegex();
-
-block.gfm.table = edit(block.gfm.table)
-  .replace('hr', block.hr)
-  .replace('heading', ' {0,3}#{1,6} ')
-  .replace('blockquote', ' {0,3}>')
-  .replace('code', ' {4}[^\\n]')
-  .replace('fences', ' {0,3}(?:`{3,}(?=[^`\\n]*\\n)|~{3,})[^\\n]*\\n')
-  .replace('list', ' {0,3}(?:[*+-]|1[.)]) ') // only lists starting from 1 can interrupt
-  .replace('html', '</?(?:tag)(?: +|\\n|/?>)|<(?:script|pre|style|!--)')
-  .replace('tag', block._tag) // tables can be interrupted by type (6) html blocks
-  .getRegex();
-
-/**
- * Pedantic grammar (original John Gruber's loose markdown specification)
- */
-
-block.pedantic = merge({}, block.normal, {
-  html: edit(
-    '^ *(?:comment *(?:\\n|\\s*$)'
-    + '|<(tag)[\\s\\S]+?</\\1> *(?:\\n{2,}|\\s*$)' // closed tag
-    + '|<tag(?:"[^"]*"|\'[^\']*\'|\\s[^\'"/>\\s]*)*?/?> *(?:\\n{2,}|\\s*$))')
-    .replace('comment', block._comment)
-    .replace(/tag/g, '(?!(?:'
-      + 'a|em|strong|small|s|cite|q|dfn|abbr|data|time|code|var|samp|kbd|sub'
-      + '|sup|i|b|u|mark|ruby|rt|rp|bdi|bdo|span|br|wbr|ins|del|img)'
-      + '\\b)\\w+(?!:|[^\\w\\s@]*@)\\b')
-    .getRegex(),
-  def: /^ *\[([^\]]+)\]: *<?([^\s>]+)>?(?: +(["(][^\n]+[")]))? *(?:\n+|$)/,
-  heading: /^ *(#{1,6}) *([^\n]+?) *(?:#+ *)?(?:\n+|$)/,
-  fences: noopTest, // fences not supported
-  paragraph: edit(block.normal._paragraph)
-    .replace('hr', block.hr)
-    .replace('heading', ' *#{1,6} *[^\n]')
-    .replace('lheading', block.lheading)
-    .replace('blockquote', ' {0,3}>')
-    .replace('|fences', '')
-    .replace('|list', '')
-    .replace('|html', '')
-    .getRegex()
-});
-
-/**
- * Inline-Level Grammar
- */
-const inline = {
-  escape: /^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/,
-  autolink: /^<(scheme:[^\s\x00-\x1f<>]*|email)>/,
-  url: noopTest,
-  tag: '^comment'
-    + '|^</[a-zA-Z][\\w:-]*\\s*>' // self-closing tag
-    + '|^<[a-zA-Z][\\w-]*(?:attribute)*?\\s*/?>' // open tag
-    + '|^<\\?[\\s\\S]*?\\?>' // processing instruction, e.g. <?php ?>
-    + '|^<![a-zA-Z]+\\s[\\s\\S]*?>' // declaration, e.g. <!DOCTYPE html>
-    + '|^<!\\[CDATA\\[[\\s\\S]*?\\]\\]>', // CDATA section
-  link: /^!?\[(label)\]\(\s*(href)(?:\s+(title))?\s*\)/,
-  reflink: /^!?\[(label)\]\[(?!\s*\])((?:\\[\[\]]?|[^\[\]\\])+)\]/,
-  nolink: /^!?\[(?!\s*\])((?:\[[^\[\]]*\]|\\[\[\]]|[^\[\]])*)\](?:\[\])?/,
-  reflinkSearch: 'reflink|nolink(?!\\()',
-  strong: {
-    start: /^(?:(\*\*(?=[*punctuation]))|\*\*)(?![\s])|__/, // (1) returns if starts w/ punctuation
-    middle: /^\*\*(?:(?:(?!overlapSkip)(?:[^*]|\\\*)|overlapSkip)|\*(?:(?!overlapSkip)(?:[^*]|\\\*)|overlapSkip)*?\*)+?\*\*$|^__(?![\s])((?:(?:(?!overlapSkip)(?:[^_]|\\_)|overlapSkip)|_(?:(?!overlapSkip)(?:[^_]|\\_)|overlapSkip)*?_)+?)__$/,
-    endAst: /[^punctuation\s]\*\*(?!\*)|[punctuation]\*\*(?!\*)(?:(?=[punctuation\s]|$))/, // last char can't be punct, or final * must also be followed by punct (or endline)
-    endUnd: /[^\s]__(?!_)(?:(?=[punctuation\s])|$)/ // last char can't be a space, and final _ must preceed punct or \s (or endline)
-  },
-  em: {
-    start: /^(?:(\*(?=[punctuation]))|\*)(?![*\s])|_/, // (1) returns if starts w/ punctuation
-    middle: /^\*(?:(?:(?!overlapSkip)(?:[^*]|\\\*)|overlapSkip)|\*(?:(?!overlapSkip)(?:[^*]|\\\*)|overlapSkip)*?\*)+?\*$|^_(?![_\s])(?:(?:(?!overlapSkip)(?:[^_]|\\_)|overlapSkip)|_(?:(?!overlapSkip)(?:[^_]|\\_)|overlapSkip)*?_)+?_$/,
-    endAst: /[^punctuation\s]\*(?!\*)|[punctuation]\*(?!\*)(?:(?=[punctuation\s]|$))/, // last char can't be punct, or final * must also be followed by punct (or endline)
-    endUnd: /[^\s]_(?!_)(?:(?=[punctuation\s])|$)/ // last char can't be a space, and final _ must preceed punct or \s (or endline)
-  },
-  code: /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/,
-  br: /^( {2,}|\\)\n(?!\s*$)/,
-  del: noopTest,
-  text: /^(`+|[^`])(?:[\s\S]*?(?:(?=[\\<!\[`*]|\b_|$)|[^ ](?= {2,}\n))|(?= {2,}\n))/,
-  punctuation: /^([\s*punctuation])/
-};
-
-// list of punctuation marks from common mark spec
-// without * and _ to workaround cases with double emphasis
-inline._punctuation = '!"#$%&\'()+\\-.,/:;<=>?@\\[\\]`^{|}~';
-inline.punctuation = edit(inline.punctuation).replace(/punctuation/g, inline._punctuation).getRegex();
-
-// sequences em should skip over [title](link), `code`, <html>
-inline._blockSkip = '\\[[^\\]]*?\\]\\([^\\)]*?\\)|`[^`]*?`|<[^>]*?>';
-inline._overlapSkip = '__[^_]*?__|\\*\\*\\[^\\*\\]*?\\*\\*';
-
-inline.em.start = edit(inline.em.start)
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.em.middle = edit(inline.em.middle)
-  .replace(/punctuation/g, inline._punctuation)
-  .replace(/overlapSkip/g, inline._overlapSkip)
-  .getRegex();
-
-inline.em.endAst = edit(inline.em.endAst, 'g')
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.em.endUnd = edit(inline.em.endUnd, 'g')
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.strong.start = edit(inline.strong.start)
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.strong.middle = edit(inline.strong.middle)
-  .replace(/punctuation/g, inline._punctuation)
-  .replace(/blockSkip/g, inline._blockSkip)
-  .getRegex();
-
-inline.strong.endAst = edit(inline.strong.endAst, 'g')
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.strong.endUnd = edit(inline.strong.endUnd, 'g')
-  .replace(/punctuation/g, inline._punctuation)
-  .getRegex();
-
-inline.blockSkip = edit(inline._blockSkip, 'g')
-  .getRegex();
-
-inline.overlapSkip = edit(inline._overlapSkip, 'g')
-  .getRegex();
-
-inline._escapes = /\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/g;
-
-inline._scheme = /[a-zA-Z][a-zA-Z0-9+.-]{1,31}/;
-inline._email = /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/;
-inline.autolink = edit(inline.autolink)
-  .replace('scheme', inline._scheme)
-  .replace('email', inline._email)
-  .getRegex();
-
-inline._attribute = /\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?/;
-
-inline.tag = edit(inline.tag)
-  .replace('comment', block._comment)
-  .replace('attribute', inline._attribute)
-  .getRegex();
-
-inline._label = /(?:\[(?:\\.|[^\[\]\\])*\]|\\.|`[^`]*`|[^\[\]\\`])*?/;
-inline._href = /<(?:\\[<>]?|[^\s<>\\])*>|[^\s\x00-\x1f]*/;
-inline._title = /"(?:\\"?|[^"\\])*"|'(?:\\'?|[^'\\])*'|\((?:\\\)?|[^)\\])*\)/;
-
-inline.link = edit(inline.link)
-  .replace('label', inline._label)
-  .replace('href', inline._href)
-  .replace('title', inline._title)
-  .getRegex();
-
-inline.reflink = edit(inline.reflink)
-  .replace('label', inline._label)
-  .getRegex();
-
-inline.reflinkSearch = edit(inline.reflinkSearch, 'g')
-  .replace('reflink', inline.reflink)
-  .replace('nolink', inline.nolink)
-  .getRegex();
-
-/**
- * Normal Inline Grammar
- */
-
-inline.normal = merge({}, inline);
-
-/**
- * Pedantic Inline Grammar
- */
-
-inline.pedantic = merge({}, inline.normal, {
-  strong: {
-    start: /^__|\*\*/,
-    middle: /^__(?=\S)([\s\S]*?\S)__(?!_)|^\*\*(?=\S)([\s\S]*?\S)\*\*(?!\*)/,
-    endAst: /\*\*(?!\*)/g,
-    endUnd: /__(?!_)/g
-  },
-  em: {
-    start: /^_|\*/,
-    middle: /^()\*(?=\S)([\s\S]*?\S)\*(?!\*)|^_(?=\S)([\s\S]*?\S)_(?!_)/,
-    endAst: /\*(?!\*)/g,
-    endUnd: /_(?!_)/g
-  },
-  link: edit(/^!?\[(label)\]\((.*?)\)/)
-    .replace('label', inline._label)
-    .getRegex(),
-  reflink: edit(/^!?\[(label)\]\s*\[([^\]]*)\]/)
-    .replace('label', inline._label)
-    .getRegex()
-});
-
-/**
- * GFM Inline Grammar
- */
-
-inline.gfm = merge({}, inline.normal, {
-  escape: edit(inline.escape).replace('])', '~|])').getRegex(),
-  _extended_email: /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/,
-  url: /^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/,
-  _backpedal: /(?:[^?!.,:;*_~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_~)]+(?!$))+/,
-  del: /^~+(?=\S)([\s\S]*?\S)~+/,
-  text: /^(`+|[^`])(?:[\s\S]*?(?:(?=[\\<!\[`*~]|\b_|https?:\/\/|ftp:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@))|(?= {2,}\n|[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@))/
-});
-
-inline.gfm.url = edit(inline.gfm.url, 'i')
-  .replace('email', inline.gfm._extended_email)
-  .getRegex();
-/**
- * GFM + Line Breaks Inline Grammar
- */
-
-inline.breaks = merge({}, inline.gfm, {
-  br: edit(inline.br).replace('{2,}', '*').getRegex(),
-  text: edit(inline.gfm.text)
-    .replace('\\b_', '\\b_| {2,}\\n')
-    .replace(/\{2,\}/g, '*')
-    .getRegex()
-});
-
-module.exports = {
-  block,
-  inline
-};
-
-
-/***/ }),
-/* 249 */,
-/* 250 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const {head} = __webpack_require__(394);
-
-// https://wiki.jenkins.io/display/JENKINS/Building+a+software+project
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.JENKINS_URL);
-	},
-	configuration({env, cwd}) {
-		const pr = env.ghprbPullId || env.gitlabMergeRequestId || env.CHANGE_ID;
-		const isPr = Boolean(pr);
-		const localBranch = env.GIT_LOCAL_BRANCH || env.GIT_BRANCH || env.gitlabBranch || env.BRANCH_NAME;
-
-		return {
-			name: 'Jenkins',
-			service: 'jenkins',
-			commit: env.ghprbActualCommit || env.GIT_COMMIT || head({env, cwd}),
-			branch: isPr ? env.ghprbTargetBranch || env.gitlabTargetBranch : localBranch,
-			build: env.BUILD_NUMBER,
-			buildUrl: env.BUILD_URL,
-			root: env.WORKSPACE,
-			pr,
-			isPr,
-			prBranch: isPr ? env.ghprbSourceBranch || env.gitlabSourceBranch || localBranch : undefined,
-		};
-	},
-};
-
-
-/***/ }),
-/* 251 */,
-/* 252 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-var isCore = __webpack_require__(153);
-var fs = __webpack_require__(747);
-var path = __webpack_require__(622);
-var caller = __webpack_require__(200);
-var nodeModulesPaths = __webpack_require__(455);
-var normalizeOptions = __webpack_require__(666);
-
-var realpathFS = fs.realpathSync && typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native : fs.realpathSync;
-
-var defaultIsFile = function isFile(file) {
-    try {
-        var stat = fs.statSync(file);
-    } catch (e) {
-        if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return false;
-        throw e;
-    }
-    return stat.isFile() || stat.isFIFO();
-};
-
-var defaultIsDir = function isDirectory(dir) {
-    try {
-        var stat = fs.statSync(dir);
-    } catch (e) {
-        if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return false;
-        throw e;
-    }
-    return stat.isDirectory();
-};
-
-var defaultRealpathSync = function realpathSync(x) {
-    try {
-        return realpathFS(x);
-    } catch (realpathErr) {
-        if (realpathErr.code !== 'ENOENT') {
-            throw realpathErr;
-        }
-    }
-    return x;
-};
-
-var maybeRealpathSync = function maybeRealpathSync(realpathSync, x, opts) {
-    if (opts && opts.preserveSymlinks === false) {
-        return realpathSync(x);
-    }
-    return x;
-};
-
-var getPackageCandidates = function getPackageCandidates(x, start, opts) {
-    var dirs = nodeModulesPaths(start, opts, x);
-    for (var i = 0; i < dirs.length; i++) {
-        dirs[i] = path.join(dirs[i], x);
-    }
-    return dirs;
-};
-
-module.exports = function resolveSync(x, options) {
-    if (typeof x !== 'string') {
-        throw new TypeError('Path must be a string.');
-    }
-    var opts = normalizeOptions(x, options);
-
-    var isFile = opts.isFile || defaultIsFile;
-    var readFileSync = opts.readFileSync || fs.readFileSync;
-    var isDirectory = opts.isDirectory || defaultIsDir;
-    var realpathSync = opts.realpathSync || defaultRealpathSync;
-    var packageIterator = opts.packageIterator;
-
-    var extensions = opts.extensions || ['.js'];
-    var basedir = opts.basedir || path.dirname(caller());
-    var parent = opts.filename || basedir;
-
-    opts.paths = opts.paths || [];
-
-    // ensure that `basedir` is an absolute path at this point, resolving against the process' current working directory
-    var absoluteStart = maybeRealpathSync(realpathSync, path.resolve(basedir), opts);
-
-    if ((/^(?:\.\.?(?:\/|$)|\/|([A-Za-z]:)?[/\\])/).test(x)) {
-        var res = path.resolve(absoluteStart, x);
-        if (x === '.' || x === '..' || x.slice(-1) === '/') res += '/';
-        var m = loadAsFileSync(res) || loadAsDirectorySync(res);
-        if (m) return maybeRealpathSync(realpathSync, m, opts);
-    } else if (isCore(x)) {
-        return x;
-    } else {
-        var n = loadNodeModulesSync(x, absoluteStart);
-        if (n) return maybeRealpathSync(realpathSync, n, opts);
-    }
-
-    var err = new Error("Cannot find module '" + x + "' from '" + parent + "'");
-    err.code = 'MODULE_NOT_FOUND';
-    throw err;
-
-    function loadAsFileSync(x) {
-        var pkg = loadpkg(path.dirname(x));
-
-        if (pkg && pkg.dir && pkg.pkg && opts.pathFilter) {
-            var rfile = path.relative(pkg.dir, x);
-            var r = opts.pathFilter(pkg.pkg, x, rfile);
-            if (r) {
-                x = path.resolve(pkg.dir, r); // eslint-disable-line no-param-reassign
-            }
-        }
-
-        if (isFile(x)) {
-            return x;
-        }
-
-        for (var i = 0; i < extensions.length; i++) {
-            var file = x + extensions[i];
-            if (isFile(file)) {
-                return file;
-            }
-        }
-    }
-
-    function loadpkg(dir) {
-        if (dir === '' || dir === '/') return;
-        if (process.platform === 'win32' && (/^\w:[/\\]*$/).test(dir)) {
-            return;
-        }
-        if ((/[/\\]node_modules[/\\]*$/).test(dir)) return;
-
-        var pkgfile = path.join(maybeRealpathSync(realpathSync, dir, opts), 'package.json');
-
-        if (!isFile(pkgfile)) {
-            return loadpkg(path.dirname(dir));
-        }
-
-        var body = readFileSync(pkgfile);
-
-        try {
-            var pkg = JSON.parse(body);
-        } catch (jsonErr) {}
-
-        if (pkg && opts.packageFilter) {
-            // v2 will pass pkgfile
-            pkg = opts.packageFilter(pkg, /*pkgfile,*/ dir); // eslint-disable-line spaced-comment
-        }
-
-        return { pkg: pkg, dir: dir };
-    }
-
-    function loadAsDirectorySync(x) {
-        var pkgfile = path.join(maybeRealpathSync(realpathSync, x, opts), '/package.json');
-        if (isFile(pkgfile)) {
-            try {
-                var body = readFileSync(pkgfile, 'UTF8');
-                var pkg = JSON.parse(body);
-            } catch (e) {}
-
-            if (pkg && opts.packageFilter) {
-                // v2 will pass pkgfile
-                pkg = opts.packageFilter(pkg, /*pkgfile,*/ x); // eslint-disable-line spaced-comment
-            }
-
-            if (pkg && pkg.main) {
-                if (typeof pkg.main !== 'string') {
-                    var mainError = new TypeError('package “' + pkg.name + '” `main` must be a string');
-                    mainError.code = 'INVALID_PACKAGE_MAIN';
-                    throw mainError;
-                }
-                if (pkg.main === '.' || pkg.main === './') {
-                    pkg.main = 'index';
-                }
-                try {
-                    var m = loadAsFileSync(path.resolve(x, pkg.main));
-                    if (m) return m;
-                    var n = loadAsDirectorySync(path.resolve(x, pkg.main));
-                    if (n) return n;
-                } catch (e) {}
-            }
-        }
-
-        return loadAsFileSync(path.join(x, '/index'));
-    }
-
-    function loadNodeModulesSync(x, start) {
-        var thunk = function () { return getPackageCandidates(x, start, opts); };
-        var dirs = packageIterator ? packageIterator(x, start, thunk, opts) : thunk();
-
-        for (var i = 0; i < dirs.length; i++) {
-            var dir = dirs[i];
-            if (isDirectory(path.dirname(dir))) {
-                var m = loadAsFileSync(dir);
-                if (m) return m;
-                var n = loadAsDirectorySync(dir);
-                if (n) return n;
-            }
-        }
-    }
-};
-
-
-/***/ }),
-/* 253 */
-/***/ (function(module) {
-
-"use strict";
-
-
-const callsites = () => {
-	const _prepareStackTrace = Error.prepareStackTrace;
-	Error.prepareStackTrace = (_, stack) => stack;
-	const stack = new Error().stack.slice(1);
-	Error.prepareStackTrace = _prepareStackTrace;
-	return stack;
-};
-
-module.exports = callsites;
-// TODO: Remove this for the next major release
-module.exports.default = callsites;
-
-
-/***/ }),
-/* 254 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const figures = __webpack_require__(412);
-
-module.exports = {
-  error: {
-    badge: figures.cross,
-    color: 'red',
-    label: 'error',
-    logLevel: 'error'
-  },
-  fatal: {
-    badge: figures.cross,
-    color: 'red',
-    label: 'fatal',
-    logLevel: 'error'
-  },
-  fav: {
-    badge: figures('❤'),
-    color: 'magenta',
-    label: 'favorite',
-    logLevel: 'info'
-  },
-  info: {
-    badge: figures.info,
-    color: 'blue',
-    label: 'info',
-    logLevel: 'info'
-  },
-  star: {
-    badge: figures.star,
-    color: 'yellow',
-    label: 'star',
-    logLevel: 'info'
-  },
-  success: {
-    badge: figures.tick,
-    color: 'green',
-    label: 'success',
-    logLevel: 'info'
-  },
-  wait: {
-    badge: figures.ellipsis,
-    color: 'blue',
-    label: 'waiting',
-    logLevel: 'info'
-  },
-  warn: {
-    badge: figures.warning,
-    color: 'yellow',
-    label: 'warning',
-    logLevel: 'warn'
-  },
-  complete: {
-    badge: figures.checkboxOn,
-    color: 'cyan',
-    label: 'complete',
-    logLevel: 'info'
-  },
-  pending: {
-    badge: figures.checkboxOff,
-    color: 'magenta',
-    label: 'pending',
-    logLevel: 'info'
-  },
-  note: {
-    badge: figures.bullet,
-    color: 'blue',
-    label: 'note',
-    logLevel: 'info'
-  },
-  start: {
-    badge: figures.play,
-    color: 'green',
-    label: 'start',
-    logLevel: 'info'
-  },
-  pause: {
-    badge: figures.squareSmallFilled,
-    color: 'yellow',
-    label: 'pause',
-    logLevel: 'info'
-  },
-  debug: {
-    badge: figures('⬤'),
-    color: 'red',
-    label: 'debug',
-    logLevel: 'debug'
-  },
-  await: {
-    badge: figures.ellipsis,
-    color: 'blue',
-    label: 'awaiting',
-    logLevel: 'info'
-  },
-  watch: {
-    badge: figures.ellipsis,
-    color: 'yellow',
-    label: 'watching',
-    logLevel: 'info'
-  },
-  log: {
-    badge: '',
-    color: '',
-    label: '',
-    logLevel: 'info'
-  }
-};
-
-
-/***/ }),
-/* 255 */,
-/* 256 */,
-/* 257 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-// https://confluence.jetbrains.com/display/TCD10/Predefined+Build+Parameters
-
-const javaProperties = __webpack_require__(563);
-const {branch} = __webpack_require__(394);
-
-const PROPERTIES_MAPPING = {root: 'teamcity.build.workingDir', branch: 'teamcity.build.branch'};
-
-const safeReadProperties = filePath => {
-	try {
-		return javaProperties.of(filePath);
-	} catch (_) {
-		return undefined;
-	}
-};
-
-const getProperties = ({env, cwd}) => {
-	const buildProperties = env.TEAMCITY_BUILD_PROPERTIES_FILE
-		? safeReadProperties(env.TEAMCITY_BUILD_PROPERTIES_FILE)
-		: undefined;
-	const configFile = buildProperties ? buildProperties.get('teamcity.configuration.properties.file') : undefined;
-	const configProperties = configFile ? safeReadProperties(configFile) : configFile;
-
-	return Object.keys(PROPERTIES_MAPPING).reduce(
-		(result, key) =>
-			Object.assign(result, {
-				[key]:
-					(buildProperties ? buildProperties.get(PROPERTIES_MAPPING[key]) : undefined) ||
-					(configProperties ? configProperties.get(PROPERTIES_MAPPING[key]) : undefined) ||
-					(key === 'branch' ? branch({env, cwd}) : undefined),
-			}),
-		{}
-	);
-};
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.TEAMCITY_VERSION);
-	},
-	configuration({env, cwd}) {
-		return {
-			name: 'TeamCity',
-			service: 'teamcity',
-			commit: env.BUILD_VCS_NUMBER,
-			build: env.BUILD_NUMBER,
-			slug: env.TEAMCITY_BUILDCONF_NAME,
-			...getProperties({env, cwd}),
-		};
-	},
-};
-
-
-/***/ }),
-/* 258 */,
-/* 259 */
-/***/ (function(module) {
-
-// http://docs.shippable.com/ci/env-vars/#stdEnv
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.SHIPPABLE);
-	},
-	configuration({env}) {
-		const pr = env.IS_PULL_REQUEST === 'true' ? env.PULL_REQUEST : undefined;
-		const isPr = Boolean(pr);
-
-		return {
-			name: 'Shippable',
-			service: 'shippable',
-			commit: env.COMMIT,
-			tag: env.GIT_TAG_NAME,
-			build: env.BUILD_NUMBER,
-			buildUrl: env.BUILD_URL,
-			branch: isPr ? env.BASE_BRANCH : env.BRANCH,
-			job: env.JOB_NUMBER,
-			pr,
-			isPr,
-			prBranch: isPr ? env.HEAD_BRANCH : undefined,
-			slug: env.SHIPPABLE_REPO_SLUG,
-			root: env.SHIPPABLE_BUILD_DIR,
-		};
-	},
-};
-
-
-/***/ }),
-/* 260 */
-/***/ (function(__unusedmodule, exports) {
-
-"use strict";
-Object.defineProperty(exports,"__esModule",{value:true});exports.SIGRTMAX=exports.getRealtimeSignals=void 0;
-const getRealtimeSignals=function(){
-const length=SIGRTMAX-SIGRTMIN+1;
-return Array.from({length},getRealtimeSignal);
-};exports.getRealtimeSignals=getRealtimeSignals;
-
-const getRealtimeSignal=function(value,index){
-return{
-name:`SIGRT${index+1}`,
-number:SIGRTMIN+index,
-action:"terminate",
-description:"Application-specific signal (realtime)",
-standard:"posix"};
-
-};
-
-const SIGRTMIN=34;
-const SIGRTMAX=64;exports.SIGRTMAX=SIGRTMAX;
-//# sourceMappingURL=realtime.js.map
-
-/***/ }),
-/* 261 */,
-/* 262 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Context = void 0;
-const fs_1 = __webpack_require__(747);
-const os_1 = __webpack_require__(87);
-class Context {
-    /**
-     * Hydrate the context from the environment
-     */
-    constructor() {
-        this.payload = {};
-        if (process.env.GITHUB_EVENT_PATH) {
-            if (fs_1.existsSync(process.env.GITHUB_EVENT_PATH)) {
-                this.payload = JSON.parse(fs_1.readFileSync(process.env.GITHUB_EVENT_PATH, { encoding: 'utf8' }));
-            }
-            else {
-                const path = process.env.GITHUB_EVENT_PATH;
-                process.stdout.write(`GITHUB_EVENT_PATH ${path} does not exist${os_1.EOL}`);
-            }
-        }
-        this.eventName = process.env.GITHUB_EVENT_NAME;
-        this.sha = process.env.GITHUB_SHA;
-        this.ref = process.env.GITHUB_REF;
-        this.workflow = process.env.GITHUB_WORKFLOW;
-        this.action = process.env.GITHUB_ACTION;
-        this.actor = process.env.GITHUB_ACTOR;
-        this.job = process.env.GITHUB_JOB;
-        this.runNumber = parseInt(process.env.GITHUB_RUN_NUMBER, 10);
-        this.runId = parseInt(process.env.GITHUB_RUN_ID, 10);
-    }
-    get issue() {
-        const payload = this.payload;
-        return Object.assign(Object.assign({}, this.repo), { number: (payload.issue || payload.pull_request || payload).number });
-    }
-    get repo() {
-        if (process.env.GITHUB_REPOSITORY) {
-            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
-            return { owner, repo };
-        }
-        if (this.payload.repository) {
-            return {
-                owner: this.payload.repository.owner.login,
-                repo: this.payload.repository.name
-            };
-        }
-        throw new Error("context.repo requires a GITHUB_REPOSITORY environment variable like 'owner/repo'");
-    }
-}
-exports.Context = Context;
-//# sourceMappingURL=context.js.map
-
-/***/ }),
-/* 263 */,
-/* 264 */
-/***/ (function(module) {
-
-"use strict";
-
-const TEMPLATE_REGEX = /(?:\\(u[a-f\d]{4}|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
-const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
-const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
-const ESCAPE_REGEX = /\\(u[a-f\d]{4}|x[a-f\d]{2}|.)|([^\\])/gi;
-
-const ESCAPES = new Map([
-	['n', '\n'],
-	['r', '\r'],
-	['t', '\t'],
-	['b', '\b'],
-	['f', '\f'],
-	['v', '\v'],
-	['0', '\0'],
-	['\\', '\\'],
-	['e', '\u001B'],
-	['a', '\u0007']
-]);
-
-function unescape(c) {
-	if ((c[0] === 'u' && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
-		return String.fromCharCode(parseInt(c.slice(1), 16));
-	}
-
-	return ESCAPES.get(c) || c;
-}
-
-function parseArguments(name, args) {
-	const results = [];
-	const chunks = args.trim().split(/\s*,\s*/g);
-	let matches;
-
-	for (const chunk of chunks) {
-		if (!isNaN(chunk)) {
-			results.push(Number(chunk));
-		} else if ((matches = chunk.match(STRING_REGEX))) {
-			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, chr) => escape ? unescape(escape) : chr));
-		} else {
-			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
-		}
-	}
-
-	return results;
-}
-
-function parseStyle(style) {
-	STYLE_REGEX.lastIndex = 0;
-
-	const results = [];
-	let matches;
-
-	while ((matches = STYLE_REGEX.exec(style)) !== null) {
-		const name = matches[1];
-
-		if (matches[2]) {
-			const args = parseArguments(name, matches[2]);
-			results.push([name].concat(args));
-		} else {
-			results.push([name]);
-		}
-	}
-
-	return results;
-}
-
-function buildStyle(chalk, styles) {
-	const enabled = {};
-
-	for (const layer of styles) {
-		for (const style of layer.styles) {
-			enabled[style[0]] = layer.inverse ? null : style.slice(1);
-		}
-	}
-
-	let current = chalk;
-	for (const styleName of Object.keys(enabled)) {
-		if (Array.isArray(enabled[styleName])) {
-			if (!(styleName in current)) {
-				throw new Error(`Unknown Chalk style: ${styleName}`);
-			}
-
-			if (enabled[styleName].length > 0) {
-				current = current[styleName].apply(current, enabled[styleName]);
-			} else {
-				current = current[styleName];
-			}
-		}
-	}
-
-	return current;
-}
-
-module.exports = (chalk, tmp) => {
-	const styles = [];
-	const chunks = [];
-	let chunk = [];
-
-	// eslint-disable-next-line max-params
-	tmp.replace(TEMPLATE_REGEX, (m, escapeChar, inverse, style, close, chr) => {
-		if (escapeChar) {
-			chunk.push(unescape(escapeChar));
-		} else if (style) {
-			const str = chunk.join('');
-			chunk = [];
-			chunks.push(styles.length === 0 ? str : buildStyle(chalk, styles)(str));
-			styles.push({inverse, styles: parseStyle(style)});
-		} else if (close) {
-			if (styles.length === 0) {
-				throw new Error('Found extraneous } in Chalk template literal');
-			}
-
-			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
-			chunk = [];
-			styles.pop();
-		} else {
-			chunk.push(chr);
-		}
-	});
-
-	chunks.push(chunk.join(''));
-
-	if (styles.length > 0) {
-		const errMsg = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
-		throw new Error(errMsg);
-	}
-
-	return chunks.join('');
-};
-
-
-/***/ }),
-/* 265 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const Range = __webpack_require__(124)
-const validRange = (range, options) => {
-  try {
-    // Return '*' instead of '' so that truthiness works.
-    // This will throw if it's invalid anyway
-    return new Range(range, options).range || '*'
-  } catch (er) {
-    return null
-  }
-}
-module.exports = validRange
-
-
-/***/ }),
-/* 266 */,
-/* 267 */,
-/* 268 */,
-/* 269 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const fs = __webpack_require__(747);
-const {promisify} = __webpack_require__(669);
-
-const pAccess = promisify(fs.access);
-
-module.exports = async path => {
-	try {
-		await pAccess(path);
-		return true;
-	} catch (_) {
-		return false;
-	}
-};
-
-module.exports.sync = path => {
-	try {
-		fs.accessSync(path);
-		return true;
-	} catch (_) {
-		return false;
-	}
-};
-
-
-/***/ }),
-/* 270 */
-/***/ (function(__unusedmodule, exports) {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.cacheWrapper = cacheWrapper;
-exports.cacheWrapperSync = cacheWrapperSync;
-
-async function cacheWrapper(cache, key, fn) {
-  const cached = cache.get(key);
-
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const result = await fn();
-  cache.set(key, result);
-  return result;
-}
-
-function cacheWrapperSync(cache, key, fn) {
-  const cached = cache.get(key);
-
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const result = fn();
-  cache.set(key, result);
-  return result;
-}
-//# sourceMappingURL=cacheWrapper.js.map
-
-/***/ }),
-/* 271 */,
-/* 272 */,
-/* 273 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const indentString = __webpack_require__(321);
-const cleanStack = __webpack_require__(201);
-
-const cleanInternalStack = stack => stack.replace(/\s+at .*aggregate-error\/index.js:\d+:\d+\)?/g, '');
-
-class AggregateError extends Error {
-	constructor(errors) {
-		if (!Array.isArray(errors)) {
-			throw new TypeError(`Expected input to be an Array, got ${typeof errors}`);
-		}
-
-		errors = [...errors].map(error => {
-			if (error instanceof Error) {
-				return error;
-			}
-
-			if (error !== null && typeof error === 'object') {
-				// Handle plain error objects with message property and/or possibly other metadata
-				return Object.assign(new Error(error.message), error);
-			}
-
-			return new Error(error);
-		});
-
-		let message = errors
-			.map(error => {
-				// The `stack` property is not standardized, so we can't assume it exists
-				return typeof error.stack === 'string' ? cleanInternalStack(cleanStack(error.stack)) : String(error);
-			})
-			.join('\n');
-		message = '\n' + indentString(message, 4);
-		super(message);
-
-		this.name = 'AggregateError';
-
-		Object.defineProperty(this, '_errors', {value: errors});
-	}
-
-	* [Symbol.iterator]() {
-		for (const error of this._errors) {
-			yield error;
-		}
-	}
-}
-
-module.exports = AggregateError;
-
-
-/***/ }),
-/* 274 */,
-/* 275 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const path = __webpack_require__(622);
-const resolveFrom = __webpack_require__(925);
-const parentModule = __webpack_require__(235);
-
-module.exports = moduleId => {
-	if (typeof moduleId !== 'string') {
-		throw new TypeError('Expected a string');
-	}
-
-	const parentPath = parentModule(__filename);
-
-	const filePath = resolveFrom(path.dirname(parentPath), moduleId);
-
-	const oldModule = require.cache[filePath];
-	// Delete itself from module parent
-	if (oldModule && oldModule.parent) {
-		let i = oldModule.parent.children.length;
-
-		while (i--) {
-			if (oldModule.parent.children[i].id === filePath) {
-				oldModule.parent.children.splice(i, 1);
-			}
-		}
-	}
-
-	delete require.cache[filePath]; // Delete module from cache
-
-	const parent = require.cache[parentPath]; // If `filePath` and `parentPath` are the same, cache will already be deleted so we won't get a memory leak in next step
-
-	return parent === undefined ? require(filePath) : parent.require(filePath); // In case cache doesn't have parent, fall back to normal require
-};
-
-
-/***/ }),
-/* 276 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const util = __webpack_require__(669);
-const path = __webpack_require__(622);
-const readline = __webpack_require__(496);
-const chalk = __webpack_require__(694);
-const figures = __webpack_require__(412);
-const pkgConf = __webpack_require__(942);
-const pkg = __webpack_require__(802);
-const defaultTypes = __webpack_require__(254);
-
-const {green, grey, red, underline, yellow} = chalk;
-
-let isPreviousLogInteractive = false;
-const defaults = pkg.options.default;
-const namespace = pkg.name;
-
-class Signale {
-  constructor(options = {}) {
-    this._interactive = options.interactive || false;
-    this._config = Object.assign(this.packageConfiguration, options.config);
-    this._customTypes = Object.assign({}, options.types);
-    this._disabled = options.disabled || false;
-    this._scopeName = options.scope || '';
-    this._timers = options.timers || new Map();
-    this._types = this._mergeTypes(defaultTypes, this._customTypes);
-    this._stream = options.stream || process.stdout;
-    this._longestLabel = this._getLongestLabel();
-    this._secrets = options.secrets || [];
-    this._generalLogLevel = this._validateLogLevel(options.logLevel);
-
-    Object.keys(this._types).forEach(type => {
-      this[type] = this._logger.bind(this, type);
-    });
-  }
-
-  get _now() {
-    return Date.now();
-  }
-
-  get scopeName() {
-    return this._scopeName;
-  }
-
-  get currentOptions() {
-    return Object.assign({}, {
-      config: this._config,
-      disabled: this._disabled,
-      types: this._customTypes,
-      interactive: this._interactive,
-      timers: this._timers,
-      stream: this._stream,
-      secrets: this._secrets,
-      logLevel: this._generalLogLevel
-    });
-  }
-
-  get date() {
-    return new Date().toLocaleDateString();
-  }
-
-  get timestamp() {
-    return new Date().toLocaleTimeString();
-  }
-
-  get filename() {
-    const _ = Error.prepareStackTrace;
-    Error.prepareStackTrace = (error, stack) => stack;
-    const {stack} = new Error();
-    Error.prepareStackTrace = _;
-
-    const callers = stack.map(x => x.getFileName());
-
-    const firstExternalFilePath = callers.find(x => {
-      return x !== callers[0];
-    });
-
-    return firstExternalFilePath ? path.basename(firstExternalFilePath) : 'anonymous';
-  }
-
-  get packageConfiguration() {
-    return pkgConf.sync(namespace, {defaults});
-  }
-
-  get _longestUnderlinedLabel() {
-    return underline(this._longestLabel);
-  }
-
-  get _logLevels() {
-    return {
-      info: 0,
-      timer: 1,
-      debug: 2,
-      warn: 3,
-      error: 4
-    };
-  }
-
-  set configuration(configObj) {
-    this._config = Object.assign(this.packageConfiguration, configObj);
-  }
-
-  _arrayify(x) {
-    return Array.isArray(x) ? x : [x];
-  }
-
-  _timeSpan(then) {
-    return (this._now - then);
-  }
-
-  _getLongestLabel() {
-    const {_types} = this;
-    const labels = Object.keys(_types).map(x => _types[x].label);
-    return labels.reduce((x, y) => x.length > y.length ? x : y);
-  }
-
-  _validateLogLevel(level) {
-    return Object.keys(this._logLevels).includes(level) ? level : 'info';
-  }
-
-  _mergeTypes(standard, custom) {
-    const types = Object.assign({}, standard);
-
-    Object.keys(custom).forEach(type => {
-      types[type] = Object.assign({}, types[type], custom[type]);
-    });
-
-    return types;
-  }
-
-  _filterSecrets(message) {
-    const {_secrets} = this;
-
-    if (_secrets.length === 0) {
-      return message;
-    }
-
-    let safeMessage = message;
-
-    _secrets.forEach(secret => {
-      safeMessage = safeMessage.replace(new RegExp(secret, 'g'), '[secure]');
-    });
-
-    return safeMessage;
-  }
-
-  _formatStream(stream) {
-    return this._arrayify(stream);
-  }
-
-  _formatDate() {
-    return `[${this.date}]`;
-  }
-
-  _formatFilename() {
-    return `[${this.filename}]`;
-  }
-
-  _formatScopeName() {
-    if (Array.isArray(this._scopeName)) {
-      const scopes = this._scopeName.filter(x => x.length !== 0);
-      return `${scopes.map(x => `[${x.trim()}]`).join(' ')}`;
-    }
-
-    return `[${this._scopeName}]`;
-  }
-
-  _formatTimestamp() {
-    return `[${this.timestamp}]`;
-  }
-
-  _formatMessage(str) {
-    return util.format(...this._arrayify(str));
-  }
-
-  _meta() {
-    const meta = [];
-
-    if (this._config.displayDate) {
-      meta.push(this._formatDate());
-    }
-
-    if (this._config.displayTimestamp) {
-      meta.push(this._formatTimestamp());
-    }
-
-    if (this._config.displayFilename) {
-      meta.push(this._formatFilename());
-    }
-
-    if (this._scopeName.length !== 0 && this._config.displayScope) {
-      meta.push(this._formatScopeName());
-    }
-
-    if (meta.length !== 0) {
-      meta.push(`${figures.pointerSmall}`);
-      return meta.map(item => grey(item));
-    }
-
-    return meta;
-  }
-
-  _hasAdditional({suffix, prefix}, args) {
-    return (suffix || prefix) ? '' : this._formatMessage(args);
-  }
-
-  _buildSignale(type, ...args) {
-    let [msg, additional] = [{}, {}];
-
-    if (args.length === 1 && typeof (args[0]) === 'object' && args[0] !== null) {
-      if (args[0] instanceof Error) {
-        [msg] = args;
-      } else {
-        const [{prefix, message, suffix}] = args;
-        additional = Object.assign({}, {suffix, prefix});
-        msg = message ? this._formatMessage(message) : this._hasAdditional(additional, args);
-      }
-    } else {
-      msg = this._formatMessage(args);
-    }
-
-    const signale = this._meta();
-
-    if (additional.prefix) {
-      if (this._config.underlinePrefix) {
-        signale.push(underline(additional.prefix));
-      } else {
-        signale.push(additional.prefix);
-      }
-    }
-
-    if (this._config.displayBadge && type.badge) {
-      signale.push(chalk[type.color](this._padEnd(type.badge, type.badge.length + 1)));
-    }
-
-    if (this._config.displayLabel && type.label) {
-      const label = this._config.uppercaseLabel ? type.label.toUpperCase() : type.label;
-      if (this._config.underlineLabel) {
-        signale.push(chalk[type.color](this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
-      } else {
-        signale.push(chalk[type.color](this._padEnd(label, this._longestLabel.length + 1)));
-      }
-    }
-
-    if (msg instanceof Error && msg.stack) {
-      const [name, ...rest] = msg.stack.split('\n');
-      if (this._config.underlineMessage) {
-        signale.push(underline(name));
-      } else {
-        signale.push(name);
-      }
-
-      signale.push(grey(rest.map(l => l.replace(/^/, '\n')).join('')));
-      return signale.join(' ');
-    }
-
-    if (this._config.underlineMessage) {
-      signale.push(underline(msg));
-    } else {
-      signale.push(msg);
-    }
-
-    if (additional.suffix) {
-      if (this._config.underlineSuffix) {
-        signale.push(underline(additional.suffix));
-      } else {
-        signale.push(additional.suffix);
-      }
-    }
-
-    return signale.join(' ');
-  }
-
-  _write(stream, message) {
-    if (this._interactive && stream.isTTY && isPreviousLogInteractive) {
-      readline.moveCursor(stream, 0, -1);
-      readline.clearLine(stream);
-      readline.cursorTo(stream, 0);
-    }
-
-    stream.write(message + '\n');
-    isPreviousLogInteractive = this._interactive;
-  }
-
-  _log(message, streams = this._stream, logLevel) {
-    if (this.isEnabled() && this._logLevels[logLevel] >= this._logLevels[this._generalLogLevel]) {
-      this._formatStream(streams).forEach(stream => {
-        this._write(stream, message);
-      });
-    }
-  }
-
-  _logger(type, ...messageObj) {
-    const {stream, logLevel} = this._types[type];
-    const message = this._buildSignale(this._types[type], ...messageObj);
-    this._log(this._filterSecrets(message), stream, this._validateLogLevel(logLevel));
-  }
-
-  _padEnd(str, targetLength) {
-    str = String(str);
-    targetLength = parseInt(targetLength, 10) || 0;
-
-    if (str.length >= targetLength) {
-      return str;
-    }
-
-    if (String.prototype.padEnd) {
-      return str.padEnd(targetLength);
-    }
-
-    targetLength -= str.length;
-    return str + ' '.repeat(targetLength);
-  }
-
-  addSecrets(secrets) {
-    if (!Array.isArray(secrets)) {
-      throw new TypeError('Argument must be an array.');
-    }
-
-    this._secrets.push(...secrets);
-  }
-
-  clearSecrets() {
-    this._secrets = [];
-  }
-
-  config(configObj) {
-    this.configuration = configObj;
-  }
-
-  disable() {
-    this._disabled = true;
-  }
-
-  enable() {
-    this._disabled = false;
-  }
-
-  isEnabled() {
-    return !this._disabled;
-  }
-
-  scope(...name) {
-    if (name.length === 0) {
-      throw new Error('No scope name was defined.');
-    }
-
-    return new Signale(Object.assign(this.currentOptions, {scope: name}));
-  }
-
-  unscope() {
-    this._scopeName = '';
-  }
-
-  time(label) {
-    if (!label) {
-      label = `timer_${this._timers.size}`;
-    }
-
-    this._timers.set(label, this._now);
-
-    const message = this._meta();
-    message.push(green(this._padEnd(this._types.start.badge, 2)));
-
-    if (this._config.underlineLabel) {
-      message.push(green(this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
-    } else {
-      message.push(green(this._padEnd(label, this._longestLabel.length + 1)));
-    }
-
-    message.push('Initialized timer...');
-    this._log(message.join(' '), this._stream, 'timer');
-
-    return label;
-  }
-
-  timeEnd(label) {
-    if (!label && this._timers.size) {
-      const is = x => x.includes('timer_');
-      label = [...this._timers.keys()].reduceRight((x, y) => {
-        return is(x) ? x : (is(y) ? y : null);
-      });
-    }
-
-    if (this._timers.has(label)) {
-      const span = this._timeSpan(this._timers.get(label));
-      this._timers.delete(label);
-
-      const message = this._meta();
-      message.push(red(this._padEnd(this._types.pause.badge, 2)));
-
-      if (this._config.underlineLabel) {
-        message.push(red(this._padEnd(underline(label), this._longestUnderlinedLabel.length + 1)));
-      } else {
-        message.push(red(this._padEnd(label, this._longestLabel.length + 1)));
-      }
-
-      message.push('Timer run for:');
-      message.push(yellow(span < 1000 ? span + 'ms' : (span / 1000).toFixed(2) + 's'));
-      this._log(message.join(' '), this._stream, 'timer');
-
-      return {label, span};
-    }
-  }
-}
-
-module.exports = Signale;
-
-
-/***/ }),
-/* 277 */
-/***/ (function(module) {
-
-module.exports = {"name":"semantic-release","description":"Automated semver compliant package publishing","version":"17.1.1","author":"Stephan Bönnemann <stephan@boennemann.me> (http://boennemann.me)","ava":{"files":["test/**/*.test.js"],"timeout":"2m"},"bin":{"semantic-release":"bin/semantic-release.js"},"bugs":{"url":"https://github.com/semantic-release/semantic-release/issues"},"contributors":["Gregor Martynus (https://twitter.com/gr2m)","Pierre Vanduynslager (https://twitter.com/@pvdlg_)"],"dependencies":{"@semantic-release/commit-analyzer":"^8.0.0","@semantic-release/error":"^2.2.0","@semantic-release/github":"^7.0.0","@semantic-release/npm":"^7.0.0","@semantic-release/release-notes-generator":"^9.0.0","aggregate-error":"^3.0.0","cosmiconfig":"^6.0.0","debug":"^4.0.0","env-ci":"^5.0.0","execa":"^4.0.0","figures":"^3.0.0","find-versions":"^3.0.0","get-stream":"^5.0.0","git-log-parser":"^1.2.0","hook-std":"^2.0.0","hosted-git-info":"^3.0.0","lodash":"^4.17.15","marked":"^1.0.0","marked-terminal":"^4.0.0","micromatch":"^4.0.2","p-each-series":"^2.1.0","p-reduce":"^2.0.0","read-pkg-up":"^7.0.0","resolve-from":"^5.0.0","semver":"^7.3.2","semver-diff":"^3.1.1","signale":"^1.2.1","yargs":"^15.0.1"},"devDependencies":{"ava":"^3.1.0","clear-module":"^4.0.0","codecov":"^3.0.0","delay":"^4.0.0","dockerode":"^3.0.0","file-url":"^3.0.0","fs-extra":"^9.0.0","got":"^11.0.0","js-yaml":"^3.10.0","mockserver-client":"^5.1.1","nock":"^12.0.0","nyc":"^15.0.0","p-retry":"^4.0.0","proxyquire":"^2.0.0","sinon":"^9.0.0","stream-buffers":"^3.0.2","tempy":"^0.5.0","xo":"^0.29.0"},"engines":{"node":">=10.18"},"files":["bin","docs","lib","index.js","cli.js"],"homepage":"https://github.com/semantic-release/semantic-release#readme","keywords":["author","automation","changelog","module","package","publish","release","semver","version"],"license":"MIT","main":"index.js","nyc":{"include":["lib/**/*.js","index.js","cli.js"],"reporter":["json","text","html"],"all":true},"prettier":{"printWidth":120,"trailingComma":"es5"},"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/semantic-release/semantic-release.git"},"scripts":{"codecov":"codecov -f coverage/coverage-final.json","lint":"xo","pretest":"npm run lint","semantic-release":"./bin/semantic-release.js","test":"nyc ava -v"},"xo":{"prettier":true,"space":true,"rules":{"unicorn/string-content":"off"}},"_resolved":"https://registry.npmjs.org/semantic-release/-/semantic-release-17.1.1.tgz","_integrity":"sha512-9H+207eynBJElrQBHySZm+sIEoJeUhPA2zU4cdlY1QSInd2lnE8GRD2ALry9EassE22c9WW+aCREwBhro5AIIg==","_from":"semantic-release@17.1.1"};
-
-/***/ }),
-/* 278 */,
-/* 279 */,
-/* 280 */
-/***/ (function(module) {
-
-module.exports = register
-
-function register (state, name, method, options) {
-  if (typeof method !== 'function') {
-    throw new Error('method for before hook must be a function')
-  }
-
-  if (!options) {
-    options = {}
-  }
-
-  if (Array.isArray(name)) {
-    return name.reverse().reduce(function (callback, name) {
-      return register.bind(null, state, name, callback, options)
-    }, method)()
-  }
-
-  return Promise.resolve()
-    .then(function () {
-      if (!state.registry[name]) {
-        return method(options)
-      }
-
-      return (state.registry[name]).reduce(function (method, registered) {
-        return registered.hook.bind(null, method, options)
-      }, method)()
-    })
-}
-
-
-/***/ }),
-/* 281 */,
-/* 282 */
-/***/ (function(module) {
-
-module.exports = require("module");
-
-/***/ }),
-/* 283 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const compare = __webpack_require__(874)
-const compareLoose = (a, b) => compare(a, b, true)
-module.exports = compareLoose
-
-
-/***/ }),
-/* 284 */,
-/* 285 */,
-/* 286 */
-/***/ (function(__unusedmodule, exports) {
-
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-// NOTE: These type checking functions intentionally don't use `instanceof`
-// because it is fragile and can be easily faked with `Object.create()`.
-
-function isArray(arg) {
-  if (Array.isArray) {
-    return Array.isArray(arg);
-  }
-  return objectToString(arg) === '[object Array]';
-}
-exports.isArray = isArray;
-
-function isBoolean(arg) {
-  return typeof arg === 'boolean';
-}
-exports.isBoolean = isBoolean;
-
-function isNull(arg) {
-  return arg === null;
-}
-exports.isNull = isNull;
-
-function isNullOrUndefined(arg) {
-  return arg == null;
-}
-exports.isNullOrUndefined = isNullOrUndefined;
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-exports.isNumber = isNumber;
-
-function isString(arg) {
-  return typeof arg === 'string';
-}
-exports.isString = isString;
-
-function isSymbol(arg) {
-  return typeof arg === 'symbol';
-}
-exports.isSymbol = isSymbol;
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-exports.isUndefined = isUndefined;
-
-function isRegExp(re) {
-  return objectToString(re) === '[object RegExp]';
-}
-exports.isRegExp = isRegExp;
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-exports.isObject = isObject;
-
-function isDate(d) {
-  return objectToString(d) === '[object Date]';
-}
-exports.isDate = isDate;
-
-function isError(e) {
-  return (objectToString(e) === '[object Error]' || e instanceof Error);
-}
-exports.isError = isError;
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-exports.isFunction = isFunction;
-
-function isPrimitive(arg) {
-  return arg === null ||
-         typeof arg === 'boolean' ||
-         typeof arg === 'number' ||
-         typeof arg === 'string' ||
-         typeof arg === 'symbol' ||  // ES6 symbol
-         typeof arg === 'undefined';
-}
-exports.isPrimitive = isPrimitive;
-
-exports.isBuffer = Buffer.isBuffer;
-
-function objectToString(o) {
-  return Object.prototype.toString.call(o);
-}
-
-
-/***/ }),
-/* 287 */,
-/* 288 */,
-/* 289 */,
-/* 290 */,
-/* 291 */,
-/* 292 */,
-/* 293 */
-/***/ (function(module) {
-
-module.exports = require("buffer");
-
-/***/ }),
-/* 294 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const fs = __webpack_require__(747);
-
-module.exports = fp => new Promise(resolve => {
-	fs.access(fp, err => {
-		resolve(!err);
-	});
-});
-
-module.exports.sync = fp => {
-	try {
-		fs.accessSync(fp);
-		return true;
-	} catch (err) {
-		return false;
-	}
-};
-
-
-/***/ }),
-/* 295 */,
-/* 296 */,
-/* 297 */,
-/* 298 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const compare = __webpack_require__(874)
-const eq = (a, b, loose) => compare(a, b, loose) === 0
-module.exports = eq
-
-
-/***/ }),
-/* 299 */
-/***/ (function(__unusedmodule, exports) {
-
-"use strict";
-
-
-Object.defineProperty(exports, '__esModule', { value: true });
-
-const VERSION = "2.2.3";
-
-/**
- * Some “list” response that can be paginated have a different response structure
- *
- * They have a `total_count` key in the response (search also has `incomplete_results`,
- * /installation/repositories also has `repository_selection`), as well as a key with
- * the list of the items which name varies from endpoint to endpoint.
- *
- * Octokit normalizes these responses so that paginated results are always returned following
- * the same structure. One challenge is that if the list response has only one page, no Link
- * header is provided, so this header alone is not sufficient to check wether a response is
- * paginated or not.
- *
- * We check if a "total_count" key is present in the response data, but also make sure that
- * a "url" property is not, as the "Get the combined status for a specific ref" endpoint would
- * otherwise match: https://developer.github.com/v3/repos/statuses/#get-the-combined-status-for-a-specific-ref
- */
-function normalizePaginatedListResponse(response) {
-  const responseNeedsNormalization = "total_count" in response.data && !("url" in response.data);
-  if (!responseNeedsNormalization) return response; // keep the additional properties intact as there is currently no other way
-  // to retrieve the same information.
-
-  const incompleteResults = response.data.incomplete_results;
-  const repositorySelection = response.data.repository_selection;
-  const totalCount = response.data.total_count;
-  delete response.data.incomplete_results;
-  delete response.data.repository_selection;
-  delete response.data.total_count;
-  const namespaceKey = Object.keys(response.data)[0];
-  const data = response.data[namespaceKey];
-  response.data = data;
-
-  if (typeof incompleteResults !== "undefined") {
-    response.data.incomplete_results = incompleteResults;
-  }
-
-  if (typeof repositorySelection !== "undefined") {
-    response.data.repository_selection = repositorySelection;
-  }
-
-  response.data.total_count = totalCount;
-  return response;
-}
-
-function iterator(octokit, route, parameters) {
-  const options = typeof route === "function" ? route.endpoint(parameters) : octokit.request.endpoint(route, parameters);
-  const requestMethod = typeof route === "function" ? route : octokit.request;
-  const method = options.method;
-  const headers = options.headers;
-  let url = options.url;
-  return {
-    [Symbol.asyncIterator]: () => ({
-      next() {
-        if (!url) {
-          return Promise.resolve({
-            done: true
-          });
-        }
-
-        return requestMethod({
-          method,
-          url,
-          headers
-        }).then(normalizePaginatedListResponse).then(response => {
-          // `response.headers.link` format:
-          // '<https://api.github.com/users/aseemk/followers?page=2>; rel="next", <https://api.github.com/users/aseemk/followers?page=2>; rel="last"'
-          // sets `url` to undefined if "next" URL is not present or `link` header is not set
-          url = ((response.headers.link || "").match(/<([^>]+)>;\s*rel="next"/) || [])[1];
-          return {
-            value: response
-          };
-        });
-      }
-
-    })
-  };
-}
-
-function paginate(octokit, route, parameters, mapFn) {
-  if (typeof parameters === "function") {
-    mapFn = parameters;
-    parameters = undefined;
-  }
-
-  return gather(octokit, [], iterator(octokit, route, parameters)[Symbol.asyncIterator](), mapFn);
-}
-
-function gather(octokit, results, iterator, mapFn) {
-  return iterator.next().then(result => {
-    if (result.done) {
-      return results;
-    }
-
-    let earlyExit = false;
-
-    function done() {
-      earlyExit = true;
-    }
-
-    results = results.concat(mapFn ? mapFn(result.value, done) : result.value.data);
-
-    if (earlyExit) {
-      return results;
-    }
-
-    return gather(octokit, results, iterator, mapFn);
-  });
-}
-
-/**
- * @param octokit Octokit instance
- * @param options Options passed to Octokit constructor
- */
-
-function paginateRest(octokit) {
-  return {
-    paginate: Object.assign(paginate.bind(null, octokit), {
-      iterator: iterator.bind(null, octokit)
-    })
-  };
-}
-paginateRest.VERSION = VERSION;
-
-exports.paginateRest = paginateRest;
-//# sourceMappingURL=index.js.map
-
-
-/***/ }),
-/* 300 */,
-/* 301 */,
-/* 302 */,
-/* 303 */,
-/* 304 */,
-/* 305 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-module.exports = {
-    highlight: __webpack_require__(994)
-  , highlightFile: __webpack_require__(409)
-  , highlightFileSync: __webpack_require__(906)
-}
-
-
-/***/ }),
-/* 306 */,
-/* 307 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-// https://help.github.com/en/articles/virtual-environments-for-github-actions#environment-variables
-const {parseBranch} = __webpack_require__(804);
-
-const getPrEvent = ({env}) => {
-	try {
-		const event = env.GITHUB_EVENT_PATH ? require(env.GITHUB_EVENT_PATH) : undefined;
-
-		if (event && event.pull_request) {
-			return {
-				branch: event.pull_request.base ? parseBranch(event.pull_request.base.ref) : undefined,
-				pr: event.pull_request.number,
-			};
-		}
-	} catch (_) {
-		// Noop
-	}
-
-	return {pr: undefined, branch: undefined};
-};
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.GITHUB_ACTION);
-	},
-	configuration({env, cwd}) {
-		const isPr = env.GITHUB_EVENT_NAME === 'pull_request';
-		const branch = parseBranch(env.GITHUB_REF);
-
-		return {
-			name: 'GitHub Actions',
-			service: 'github',
-			commit: env.GITHUB_SHA,
-			isPr,
-			branch,
-			prBranch: isPr ? branch : undefined,
-			slug: env.GITHUB_REPOSITORY,
-			root: env.GITHUB_WORKSPACE,
-			...(isPr ? getPrEvent({env, cwd}) : undefined),
-		};
-	},
-};
-
-
-/***/ }),
-/* 308 */,
-/* 309 */,
-/* 310 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const Range = __webpack_require__(124)
-const satisfies = (version, range, options) => {
-  try {
-    range = new Range(range, options)
-  } catch (er) {
-    return false
-  }
-  return range.test(version)
-}
-module.exports = satisfies
-
-
-/***/ }),
-/* 311 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-Object.defineProperty(exports,"__esModule",{value:true});exports.signalsByNumber=exports.signalsByName=void 0;var _os=__webpack_require__(87);
-
-var _signals=__webpack_require__(652);
-var _realtime=__webpack_require__(260);
-
-
-
-const getSignalsByName=function(){
-const signals=(0,_signals.getSignals)();
-return signals.reduce(getSignalByName,{});
-};
-
-const getSignalByName=function(
-signalByNameMemo,
-{name,number,description,supported,action,forced,standard})
-{
-return{
-...signalByNameMemo,
-[name]:{name,number,description,supported,action,forced,standard}};
-
-};
-
-const signalsByName=getSignalsByName();exports.signalsByName=signalsByName;
-
-
-
-
-const getSignalsByNumber=function(){
-const signals=(0,_signals.getSignals)();
-const length=_realtime.SIGRTMAX+1;
-const signalsA=Array.from({length},(value,number)=>
-getSignalByNumber(number,signals));
-
-return Object.assign({},...signalsA);
-};
-
-const getSignalByNumber=function(number,signals){
-const signal=findSignalByNumber(number,signals);
-
-if(signal===undefined){
-return{};
-}
-
-const{name,description,supported,action,forced,standard}=signal;
-return{
-[number]:{
-name,
-number,
-description,
-supported,
-action,
-forced,
-standard}};
-
-
-};
-
-
-
-const findSignalByNumber=function(number,signals){
-const signal=signals.find(({name})=>_os.constants.signals[name]===number);
-
-if(signal!==undefined){
-return signal;
-}
-
-return signals.find(signalA=>signalA.number===number);
-};
-
-const signalsByNumber=getSignalsByNumber();exports.signalsByNumber=signalsByNumber;
-//# sourceMappingURL=main.js.map
-
-/***/ }),
-/* 312 */,
-/* 313 */,
-/* 314 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-const utils = __webpack_require__(224);
-const {
-  CHAR_ASTERISK,             /* * */
-  CHAR_AT,                   /* @ */
-  CHAR_BACKWARD_SLASH,       /* \ */
-  CHAR_COMMA,                /* , */
-  CHAR_DOT,                  /* . */
-  CHAR_EXCLAMATION_MARK,     /* ! */
-  CHAR_FORWARD_SLASH,        /* / */
-  CHAR_LEFT_CURLY_BRACE,     /* { */
-  CHAR_LEFT_PARENTHESES,     /* ( */
-  CHAR_LEFT_SQUARE_BRACKET,  /* [ */
-  CHAR_PLUS,                 /* + */
-  CHAR_QUESTION_MARK,        /* ? */
-  CHAR_RIGHT_CURLY_BRACE,    /* } */
-  CHAR_RIGHT_PARENTHESES,    /* ) */
-  CHAR_RIGHT_SQUARE_BRACKET  /* ] */
-} = __webpack_require__(446);
-
-const isPathSeparator = code => {
-  return code === CHAR_FORWARD_SLASH || code === CHAR_BACKWARD_SLASH;
-};
-
-const depth = token => {
-  if (token.isPrefix !== true) {
-    token.depth = token.isGlobstar ? Infinity : 1;
-  }
-};
-
-/**
- * Quickly scans a glob pattern and returns an object with a handful of
- * useful properties, like `isGlob`, `path` (the leading non-glob, if it exists),
- * `glob` (the actual pattern), and `negated` (true if the path starts with `!`).
- *
- * ```js
- * const pm = require('picomatch');
- * console.log(pm.scan('foo/bar/*.js'));
- * { isGlob: true, input: 'foo/bar/*.js', base: 'foo/bar', glob: '*.js' }
- * ```
- * @param {String} `str`
- * @param {Object} `options`
- * @return {Object} Returns an object with tokens and regex source string.
- * @api public
- */
-
-const scan = (input, options) => {
-  const opts = options || {};
-
-  const length = input.length - 1;
-  const scanToEnd = opts.parts === true || opts.scanToEnd === true;
-  const slashes = [];
-  const tokens = [];
-  const parts = [];
-
-  let str = input;
-  let index = -1;
-  let start = 0;
-  let lastIndex = 0;
-  let isBrace = false;
-  let isBracket = false;
-  let isGlob = false;
-  let isExtglob = false;
-  let isGlobstar = false;
-  let braceEscaped = false;
-  let backslashes = false;
-  let negated = false;
-  let finished = false;
-  let braces = 0;
-  let prev;
-  let code;
-  let token = { value: '', depth: 0, isGlob: false };
-
-  const eos = () => index >= length;
-  const peek = () => str.charCodeAt(index + 1);
-  const advance = () => {
-    prev = code;
-    return str.charCodeAt(++index);
-  };
-
-  while (index < length) {
-    code = advance();
-    let next;
-
-    if (code === CHAR_BACKWARD_SLASH) {
-      backslashes = token.backslashes = true;
-      code = advance();
-
-      if (code === CHAR_LEFT_CURLY_BRACE) {
-        braceEscaped = true;
-      }
-      continue;
-    }
-
-    if (braceEscaped === true || code === CHAR_LEFT_CURLY_BRACE) {
-      braces++;
-
-      while (eos() !== true && (code = advance())) {
-        if (code === CHAR_BACKWARD_SLASH) {
-          backslashes = token.backslashes = true;
-          advance();
-          continue;
-        }
-
-        if (code === CHAR_LEFT_CURLY_BRACE) {
-          braces++;
-          continue;
-        }
-
-        if (braceEscaped !== true && code === CHAR_DOT && (code = advance()) === CHAR_DOT) {
-          isBrace = token.isBrace = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-
-          break;
-        }
-
-        if (braceEscaped !== true && code === CHAR_COMMA) {
-          isBrace = token.isBrace = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-
-          break;
-        }
-
-        if (code === CHAR_RIGHT_CURLY_BRACE) {
-          braces--;
-
-          if (braces === 0) {
-            braceEscaped = false;
-            isBrace = token.isBrace = true;
-            finished = true;
-            break;
-          }
-        }
-      }
-
-      if (scanToEnd === true) {
-        continue;
-      }
-
-      break;
-    }
-
-    if (code === CHAR_FORWARD_SLASH) {
-      slashes.push(index);
-      tokens.push(token);
-      token = { value: '', depth: 0, isGlob: false };
-
-      if (finished === true) continue;
-      if (prev === CHAR_DOT && index === (start + 1)) {
-        start += 2;
-        continue;
-      }
-
-      lastIndex = index + 1;
-      continue;
-    }
-
-    if (opts.noext !== true) {
-      const isExtglobChar = code === CHAR_PLUS
-        || code === CHAR_AT
-        || code === CHAR_ASTERISK
-        || code === CHAR_QUESTION_MARK
-        || code === CHAR_EXCLAMATION_MARK;
-
-      if (isExtglobChar === true && peek() === CHAR_LEFT_PARENTHESES) {
-        isGlob = token.isGlob = true;
-        isExtglob = token.isExtglob = true;
-        finished = true;
-
-        if (scanToEnd === true) {
-          while (eos() !== true && (code = advance())) {
-            if (code === CHAR_BACKWARD_SLASH) {
-              backslashes = token.backslashes = true;
-              code = advance();
-              continue;
-            }
-
-            if (code === CHAR_RIGHT_PARENTHESES) {
-              isGlob = token.isGlob = true;
-              finished = true;
-              break;
-            }
-          }
-          continue;
-        }
-        break;
-      }
-    }
-
-    if (code === CHAR_ASTERISK) {
-      if (prev === CHAR_ASTERISK) isGlobstar = token.isGlobstar = true;
-      isGlob = token.isGlob = true;
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-      break;
-    }
-
-    if (code === CHAR_QUESTION_MARK) {
-      isGlob = token.isGlob = true;
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-      break;
-    }
-
-    if (code === CHAR_LEFT_SQUARE_BRACKET) {
-      while (eos() !== true && (next = advance())) {
-        if (next === CHAR_BACKWARD_SLASH) {
-          backslashes = token.backslashes = true;
-          advance();
-          continue;
-        }
-
-        if (next === CHAR_RIGHT_SQUARE_BRACKET) {
-          isBracket = token.isBracket = true;
-          isGlob = token.isGlob = true;
-          finished = true;
-
-          if (scanToEnd === true) {
-            continue;
-          }
-          break;
-        }
-      }
-    }
-
-    if (opts.nonegate !== true && code === CHAR_EXCLAMATION_MARK && index === start) {
-      negated = token.negated = true;
-      start++;
-      continue;
-    }
-
-    if (opts.noparen !== true && code === CHAR_LEFT_PARENTHESES) {
-      isGlob = token.isGlob = true;
-
-      if (scanToEnd === true) {
-        while (eos() !== true && (code = advance())) {
-          if (code === CHAR_LEFT_PARENTHESES) {
-            backslashes = token.backslashes = true;
-            code = advance();
-            continue;
-          }
-
-          if (code === CHAR_RIGHT_PARENTHESES) {
-            finished = true;
-            break;
-          }
-        }
-        continue;
-      }
-      break;
-    }
-
-    if (isGlob === true) {
-      finished = true;
-
-      if (scanToEnd === true) {
-        continue;
-      }
-
-      break;
-    }
-  }
-
-  if (opts.noext === true) {
-    isExtglob = false;
-    isGlob = false;
-  }
-
-  let base = str;
-  let prefix = '';
-  let glob = '';
-
-  if (start > 0) {
-    prefix = str.slice(0, start);
-    str = str.slice(start);
-    lastIndex -= start;
-  }
-
-  if (base && isGlob === true && lastIndex > 0) {
-    base = str.slice(0, lastIndex);
-    glob = str.slice(lastIndex);
-  } else if (isGlob === true) {
-    base = '';
-    glob = str;
-  } else {
-    base = str;
-  }
-
-  if (base && base !== '' && base !== '/' && base !== str) {
-    if (isPathSeparator(base.charCodeAt(base.length - 1))) {
-      base = base.slice(0, -1);
-    }
-  }
-
-  if (opts.unescape === true) {
-    if (glob) glob = utils.removeBackslashes(glob);
-
-    if (base && backslashes === true) {
-      base = utils.removeBackslashes(base);
-    }
-  }
-
-  const state = {
-    prefix,
-    input,
-    start,
-    base,
-    glob,
-    isBrace,
-    isBracket,
-    isGlob,
-    isExtglob,
-    isGlobstar,
-    negated
-  };
-
-  if (opts.tokens === true) {
-    state.maxDepth = 0;
-    if (!isPathSeparator(code)) {
-      tokens.push(token);
-    }
-    state.tokens = tokens;
-  }
-
-  if (opts.parts === true || opts.tokens === true) {
-    let prevIndex;
-
-    for (let idx = 0; idx < slashes.length; idx++) {
-      const n = prevIndex ? prevIndex + 1 : start;
-      const i = slashes[idx];
-      const value = input.slice(n, i);
-      if (opts.tokens) {
-        if (idx === 0 && start !== 0) {
-          tokens[idx].isPrefix = true;
-          tokens[idx].value = prefix;
-        } else {
-          tokens[idx].value = value;
-        }
-        depth(tokens[idx]);
-        state.maxDepth += tokens[idx].depth;
-      }
-      if (idx !== 0 || value !== '') {
-        parts.push(value);
-      }
-      prevIndex = i;
-    }
-
-    if (prevIndex && prevIndex + 1 < input.length) {
-      const value = input.slice(prevIndex + 1);
-      parts.push(value);
-
-      if (opts.tokens) {
-        tokens[tokens.length - 1].value = value;
-        depth(tokens[tokens.length - 1]);
-        state.maxDepth += tokens[tokens.length - 1].depth;
-      }
-    }
-
-    state.slashes = slashes;
-    state.parts = parts;
-  }
-
-  return state;
-};
-
-module.exports = scan;
-
-
-/***/ }),
-/* 315 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-var Transform = __webpack_require__(574).Transform
-  , inherits  = __webpack_require__(669).inherits
-  , xtend     = __webpack_require__(940)
-
-function DestroyableTransform(opts) {
-  Transform.call(this, opts)
-  this._destroyed = false
-}
-
-inherits(DestroyableTransform, Transform)
-
-DestroyableTransform.prototype.destroy = function(err) {
-  if (this._destroyed) return
-  this._destroyed = true
-  
-  var self = this
-  process.nextTick(function() {
-    if (err)
-      self.emit('error', err)
-    self.emit('close')
-  })
-}
-
-// a noop _transform function
-function noop (chunk, enc, callback) {
-  callback(null, chunk)
-}
-
-
-// create a new export function, used by both the main export and
-// the .ctor export, contains common logic for dealing with arguments
-function through2 (construct) {
-  return function (options, transform, flush) {
-    if (typeof options == 'function') {
-      flush     = transform
-      transform = options
-      options   = {}
-    }
-
-    if (typeof transform != 'function')
-      transform = noop
-
-    if (typeof flush != 'function')
-      flush = null
-
-    return construct(options, transform, flush)
-  }
-}
-
-
-// main export, just make me a transform stream!
-module.exports = through2(function (options, transform, flush) {
-  var t2 = new DestroyableTransform(options)
-
-  t2._transform = transform
-
-  if (flush)
-    t2._flush = flush
-
-  return t2
-})
-
-
-// make me a reusable prototype that I can `new`, or implicitly `new`
-// with a constructor call
-module.exports.ctor = through2(function (options, transform, flush) {
-  function Through2 (override) {
-    if (!(this instanceof Through2))
-      return new Through2(override)
-
-    this.options = xtend(options, override)
-
-    DestroyableTransform.call(this, this.options)
-  }
-
-  inherits(Through2, DestroyableTransform)
-
-  Through2.prototype._transform = transform
-
-  if (flush)
-    Through2.prototype._flush = flush
-
-  return Through2
-})
-
-
-module.exports.obj = through2(function (options, transform, flush) {
-  var t2 = new DestroyableTransform(xtend({ objectMode: true, highWaterMark: 16 }, options))
-
-  t2._transform = transform
-
-  if (flush)
-    t2._flush = flush
-
-  return t2
-})
-
-
-/***/ }),
-/* 316 */,
-/* 317 */
-/***/ (function(module) {
-
-"use strict";
-
-
-var gitHosts = module.exports = {
-  github: {
-    // First two are insecure and generally shouldn't be used any more, but
-    // they are still supported.
-    'protocols': [ 'git', 'http', 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'github.com',
-    'treepath': 'tree',
-    'filetemplate': 'https://{auth@}raw.githubusercontent.com/{user}/{project}/{committish}/{path}',
-    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
-    'gittemplate': 'git://{auth@}{domain}/{user}/{project}.git{#committish}',
-    'tarballtemplate': 'https://codeload.{domain}/{user}/{project}/tar.gz/{committish}'
-  },
-  bitbucket: {
-    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'bitbucket.org',
-    'treepath': 'src',
-    'tarballtemplate': 'https://{domain}/{user}/{project}/get/{committish}.tar.gz'
-  },
-  gitlab: {
-    'protocols': [ 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'gitlab.com',
-    'treepath': 'tree',
-    'bugstemplate': 'https://{domain}/{user}/{project}/issues',
-    'httpstemplate': 'git+https://{auth@}{domain}/{user}/{projectPath}.git{#committish}',
-    'tarballtemplate': 'https://{domain}/{user}/{project}/repository/archive.tar.gz?ref={committish}',
-    'pathmatch': /^[/]([^/]+)[/]((?!.*(\/-\/|\/repository\/archive\.tar\.gz\?=.*|\/repository\/[^/]+\/archive.tar.gz$)).*?)(?:[.]git|[/])?$/
-  },
-  gist: {
-    'protocols': [ 'git', 'git+ssh', 'git+https', 'ssh', 'https' ],
-    'domain': 'gist.github.com',
-    'pathmatch': /^[/](?:([^/]+)[/])?([a-z0-9]{32,})(?:[.]git)?$/,
-    'filetemplate': 'https://gist.githubusercontent.com/{user}/{project}/raw{/committish}/{path}',
-    'bugstemplate': 'https://{domain}/{project}',
-    'gittemplate': 'git://{domain}/{project}.git{#committish}',
-    'sshtemplate': 'git@{domain}:/{project}.git{#committish}',
-    'sshurltemplate': 'git+ssh://git@{domain}/{project}.git{#committish}',
-    'browsetemplate': 'https://{domain}/{project}{/committish}',
-    'browsefiletemplate': 'https://{domain}/{project}{/committish}{#path}',
-    'docstemplate': 'https://{domain}/{project}{/committish}',
-    'httpstemplate': 'git+https://{domain}/{project}.git{#committish}',
-    'shortcuttemplate': '{type}:{project}{#committish}',
-    'pathtemplate': '{project}{#committish}',
-    'tarballtemplate': 'https://codeload.github.com/gist/{project}/tar.gz/{committish}',
-    'hashformat': function (fragment) {
-      return 'file-' + formatHashFragment(fragment)
-    }
-  }
-}
-
-var gitHostDefaults = {
-  'sshtemplate': 'git@{domain}:{user}/{project}.git{#committish}',
-  'sshurltemplate': 'git+ssh://git@{domain}/{user}/{project}.git{#committish}',
-  'browsetemplate': 'https://{domain}/{user}/{project}{/tree/committish}',
-  'browsefiletemplate': 'https://{domain}/{user}/{project}/{treepath}/{committish}/{path}{#fragment}',
-  'docstemplate': 'https://{domain}/{user}/{project}{/tree/committish}#readme',
-  'httpstemplate': 'git+https://{auth@}{domain}/{user}/{project}.git{#committish}',
-  'filetemplate': 'https://{domain}/{user}/{project}/raw/{committish}/{path}',
-  'shortcuttemplate': '{type}:{user}/{project}{#committish}',
-  'pathtemplate': '{user}/{project}{#committish}',
-  'pathmatch': /^[/]([^/]+)[/]([^/]+?)(?:[.]git|[/])?$/,
-  'hashformat': formatHashFragment
-}
-
-Object.keys(gitHosts).forEach(function (name) {
-  Object.keys(gitHostDefaults).forEach(function (key) {
-    if (gitHosts[name][key]) return
-    gitHosts[name][key] = gitHostDefaults[key]
-  })
-  gitHosts[name].protocols_re = RegExp('^(' +
-    gitHosts[name].protocols.map(function (protocol) {
-      return protocol.replace(/([\\+*{}()[\]$^|])/g, '\\$1')
-    }).join('|') + '):$')
-})
-
-function formatHashFragment (fragment) {
-  return fragment.toLowerCase().replace(/^\W+|\/|\W+$/g, '').replace(/\W+/g, '-')
-}
-
-
-/***/ }),
-/* 318 */,
-/* 319 */,
-/* 320 */,
-/* 321 */
-/***/ (function(module) {
-
-"use strict";
-
-
-module.exports = (string, count = 1, options) => {
-	options = {
-		indent: ' ',
-		includeEmptyLines: false,
-		...options
-	};
-
-	if (typeof string !== 'string') {
-		throw new TypeError(
-			`Expected \`input\` to be a \`string\`, got \`${typeof string}\``
-		);
-	}
-
-	if (typeof count !== 'number') {
-		throw new TypeError(
-			`Expected \`count\` to be a \`number\`, got \`${typeof count}\``
-		);
-	}
-
-	if (typeof options.indent !== 'string') {
-		throw new TypeError(
-			`Expected \`options.indent\` to be a \`string\`, got \`${typeof options.indent}\``
-		);
-	}
-
-	if (count === 0) {
-		return string;
-	}
-
-	const regex = options.includeEmptyLines ? /^/gm : /^(?!\s*$)/gm;
-
-	return string.replace(regex, options.indent.repeat(count));
-};
-
-
-/***/ }),
-/* 322 */,
-/* 323 */
-/***/ (function(module) {
-
-"use strict";
-
-
-const isStream = stream =>
-	stream !== null &&
-	typeof stream === 'object' &&
-	typeof stream.pipe === 'function';
-
-isStream.writable = stream =>
-	isStream(stream) &&
-	stream.writable !== false &&
-	typeof stream._write === 'function' &&
-	typeof stream._writableState === 'object';
-
-isStream.readable = stream =>
-	isStream(stream) &&
-	stream.readable !== false &&
-	typeof stream._read === 'function' &&
-	typeof stream._readableState === 'object';
-
-isStream.duplex = stream =>
-	isStream.writable(stream) &&
-	isStream.readable(stream);
-
-isStream.transform = stream =>
-	isStream.duplex(stream) &&
-	typeof stream._transform === 'function' &&
-	typeof stream._transformState === 'object';
-
-module.exports = isStream;
-
-
-/***/ }),
-/* 324 */,
-/* 325 */,
-/* 326 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-const {escapeRegExp, size, isString} = __webpack_require__(557);
-const {SECRET_REPLACEMENT, SECRET_MIN_SIZE} = __webpack_require__(861);
-
-module.exports = (env) => {
-  const toReplace = Object.keys(env).filter((envVar) => {
-    // https://github.com/semantic-release/semantic-release/issues/1558
-    if (envVar === 'GOPRIVATE') {
-      return false;
-    }
-
-    return /token|password|credential|secret|private/i.test(envVar) && size(env[envVar].trim()) >= SECRET_MIN_SIZE;
-  });
-
-  const regexp = new RegExp(toReplace.map((envVar) => escapeRegExp(env[envVar])).join('|'), 'g');
-  return (output) =>
-    output && isString(output) && toReplace.length > 0 ? output.toString().replace(regexp, SECRET_REPLACEMENT) : output;
-};
-
-
-/***/ }),
-/* 327 */
-/***/ (function(module) {
-
-// https://buildkite.com/docs/builds/environment-variables
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.BUILDKITE);
-	},
-	configuration({env}) {
-		const pr = env.BUILDKITE_PULL_REQUEST === 'false' ? undefined : env.BUILDKITE_PULL_REQUEST;
-		const isPr = Boolean(pr);
-
-		return {
-			name: 'Buildkite',
-			service: 'buildkite',
-			build: env.BUILDKITE_BUILD_NUMBER,
-			buildUrl: env.BUILDKITE_BUILD_URL,
-			commit: env.BUILDKITE_COMMIT,
-			tag: env.BUILDKITE_TAG,
-			branch: isPr ? env.BUILDKITE_PULL_REQUEST_BASE_BRANCH : env.BUILDKITE_BRANCH,
-			slug: `${env.BUILDKITE_ORGANIZATION_SLUG}/${env.BUILDKITE_PROJECT_SLUG}`,
-			pr,
-			isPr,
-			prBranch: isPr ? env.BUILDKITE_BRANCH : undefined,
-			root: env.BUILDKITE_BUILD_CHECKOUT_PATH,
-		};
-	},
-};
-
-
-/***/ }),
-/* 328 */,
-/* 329 */,
-/* 330 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const ansiStyles = __webpack_require__(663);
-const {stdout: stdoutColor, stderr: stderrColor} = __webpack_require__(247);
-const {
-	stringReplaceAll,
-	stringEncaseCRLFWithFirstIndex
-} = __webpack_require__(833);
-
-const {isArray} = Array;
-
-// `supportsColor.level` → `ansiStyles.color[name]` mapping
-const levelMapping = [
-	'ansi',
-	'ansi',
-	'ansi256',
-	'ansi16m'
-];
-
-const styles = Object.create(null);
-
-const applyOptions = (object, options = {}) => {
-	if (options.level && !(Number.isInteger(options.level) && options.level >= 0 && options.level <= 3)) {
-		throw new Error('The `level` option should be an integer from 0 to 3');
-	}
-
-	// Detect level if not set manually
-	const colorLevel = stdoutColor ? stdoutColor.level : 0;
-	object.level = options.level === undefined ? colorLevel : options.level;
-};
-
-class ChalkClass {
-	constructor(options) {
-		// eslint-disable-next-line no-constructor-return
-		return chalkFactory(options);
-	}
-}
-
-const chalkFactory = options => {
-	const chalk = {};
-	applyOptions(chalk, options);
-
-	chalk.template = (...arguments_) => chalkTag(chalk.template, ...arguments_);
-
-	Object.setPrototypeOf(chalk, Chalk.prototype);
-	Object.setPrototypeOf(chalk.template, chalk);
-
-	chalk.template.constructor = () => {
-		throw new Error('`chalk.constructor()` is deprecated. Use `new chalk.Instance()` instead.');
-	};
-
-	chalk.template.Instance = ChalkClass;
-
-	return chalk.template;
-};
-
-function Chalk(options) {
-	return chalkFactory(options);
-}
-
-for (const [styleName, style] of Object.entries(ansiStyles)) {
-	styles[styleName] = {
-		get() {
-			const builder = createBuilder(this, createStyler(style.open, style.close, this._styler), this._isEmpty);
-			Object.defineProperty(this, styleName, {value: builder});
-			return builder;
-		}
-	};
-}
-
-styles.visible = {
-	get() {
-		const builder = createBuilder(this, this._styler, true);
-		Object.defineProperty(this, 'visible', {value: builder});
-		return builder;
-	}
-};
-
-const usedModels = ['rgb', 'hex', 'keyword', 'hsl', 'hsv', 'hwb', 'ansi', 'ansi256'];
-
-for (const model of usedModels) {
-	styles[model] = {
-		get() {
-			const {level} = this;
-			return function (...arguments_) {
-				const styler = createStyler(ansiStyles.color[levelMapping[level]][model](...arguments_), ansiStyles.color.close, this._styler);
-				return createBuilder(this, styler, this._isEmpty);
-			};
-		}
-	};
-}
-
-for (const model of usedModels) {
-	const bgModel = 'bg' + model[0].toUpperCase() + model.slice(1);
-	styles[bgModel] = {
-		get() {
-			const {level} = this;
-			return function (...arguments_) {
-				const styler = createStyler(ansiStyles.bgColor[levelMapping[level]][model](...arguments_), ansiStyles.bgColor.close, this._styler);
-				return createBuilder(this, styler, this._isEmpty);
-			};
-		}
-	};
-}
-
-const proto = Object.defineProperties(() => {}, {
-	...styles,
-	level: {
-		enumerable: true,
-		get() {
-			return this._generator.level;
-		},
-		set(level) {
-			this._generator.level = level;
-		}
-	}
-});
-
-const createStyler = (open, close, parent) => {
-	let openAll;
-	let closeAll;
-	if (parent === undefined) {
-		openAll = open;
-		closeAll = close;
-	} else {
-		openAll = parent.openAll + open;
-		closeAll = close + parent.closeAll;
-	}
-
-	return {
-		open,
-		close,
-		openAll,
-		closeAll,
-		parent
-	};
-};
-
-const createBuilder = (self, _styler, _isEmpty) => {
-	const builder = (...arguments_) => {
-		if (isArray(arguments_[0]) && isArray(arguments_[0].raw)) {
-			// Called as a template literal, for example: chalk.red`2 + 3 = {bold ${2+3}}`
-			return applyStyle(builder, chalkTag(builder, ...arguments_));
-		}
-
-		// Single argument is hot path, implicit coercion is faster than anything
-		// eslint-disable-next-line no-implicit-coercion
-		return applyStyle(builder, (arguments_.length === 1) ? ('' + arguments_[0]) : arguments_.join(' '));
-	};
-
-	// We alter the prototype because we must return a function, but there is
-	// no way to create a function with a different prototype
-	Object.setPrototypeOf(builder, proto);
-
-	builder._generator = self;
-	builder._styler = _styler;
-	builder._isEmpty = _isEmpty;
-
-	return builder;
-};
-
-const applyStyle = (self, string) => {
-	if (self.level <= 0 || !string) {
-		return self._isEmpty ? '' : string;
-	}
-
-	let styler = self._styler;
-
-	if (styler === undefined) {
-		return string;
-	}
-
-	const {openAll, closeAll} = styler;
-	if (string.indexOf('\u001B') !== -1) {
-		while (styler !== undefined) {
-			// Replace any instances already present with a re-opening code
-			// otherwise only the part of the string until said closing code
-			// will be colored, and the rest will simply be 'plain'.
-			string = stringReplaceAll(string, styler.close, styler.open);
-
-			styler = styler.parent;
-		}
-	}
-
-	// We can move both next actions out of loop, because remaining actions in loop won't have
-	// any/visible effect on parts we add here. Close the styling before a linebreak and reopen
-	// after next line to fix a bleed issue on macOS: https://github.com/chalk/chalk/pull/92
-	const lfIndex = string.indexOf('\n');
-	if (lfIndex !== -1) {
-		string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
-	}
-
-	return openAll + string + closeAll;
-};
-
-let template;
-const chalkTag = (chalk, ...strings) => {
-	const [firstString] = strings;
-
-	if (!isArray(firstString) || !isArray(firstString.raw)) {
-		// If chalk() was called by itself or with a string,
-		// return the string itself as a string.
-		return strings.join(' ');
-	}
-
-	const arguments_ = strings.slice(1);
-	const parts = [firstString.raw[0]];
-
-	for (let i = 1; i < firstString.length; i++) {
-		parts.push(
-			String(arguments_[i - 1]).replace(/[{}\\]/g, '\\$&'),
-			String(firstString.raw[i])
-		);
-	}
-
-	if (template === undefined) {
-		template = __webpack_require__(930);
-	}
-
-	return template(chalk, parts.join(''));
-};
-
-Object.defineProperties(Chalk.prototype, styles);
-
-const chalk = Chalk(); // eslint-disable-line new-cap
-chalk.supportsColor = stdoutColor;
-chalk.stderr = Chalk({level: stderrColor ? stderrColor.level : 0}); // eslint-disable-line new-cap
-chalk.stderr.supportsColor = stderrColor;
-
-module.exports = chalk;
-
-
-/***/ }),
+/* 330 */,
 /* 331 */,
 /* 332 */,
 /* 333 */,
@@ -27588,154 +27812,113 @@ function nextTick(fn, arg1, arg2, arg3) {
 /* 339 */,
 /* 340 */,
 /* 341 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
+const path = __webpack_require__(622);
+const locatePath = __webpack_require__(457);
+const pathExists = __webpack_require__(294);
 
-Object.defineProperty(exports, "__esModule", {
-  value: true
-});
-exports.Explorer = void 0;
+const stop = Symbol('findUp.stop');
 
-var _path = _interopRequireDefault(__webpack_require__(622));
+module.exports = async (name, options = {}) => {
+	let directory = path.resolve(options.cwd || '');
+	const {root} = path.parse(directory);
+	const paths = [].concat(name);
 
-var _ExplorerBase = __webpack_require__(594);
+	const runMatcher = async locateOptions => {
+		if (typeof name !== 'function') {
+			return locatePath(paths, locateOptions);
+		}
 
-var _readFile = __webpack_require__(780);
+		const foundPath = await name(locateOptions.cwd);
+		if (typeof foundPath === 'string') {
+			return locatePath([foundPath], locateOptions);
+		}
 
-var _cacheWrapper = __webpack_require__(270);
+		return foundPath;
+	};
 
-var _getDirectory = __webpack_require__(185);
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		// eslint-disable-next-line no-await-in-loop
+		const foundPath = await runMatcher({...options, cwd: directory});
 
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+		if (foundPath === stop) {
+			return;
+		}
 
-function _asyncIterator(iterable) { var method; if (typeof Symbol !== "undefined") { if (Symbol.asyncIterator) { method = iterable[Symbol.asyncIterator]; if (method != null) return method.call(iterable); } if (Symbol.iterator) { method = iterable[Symbol.iterator]; if (method != null) return method.call(iterable); } } throw new TypeError("Object is not async iterable"); }
+		if (foundPath) {
+			return path.resolve(directory, foundPath);
+		}
 
-class Explorer extends _ExplorerBase.ExplorerBase {
-  constructor(options) {
-    super(options);
-  }
+		if (directory === root) {
+			return;
+		}
 
-  async search(searchFrom = process.cwd()) {
-    const startDirectory = await (0, _getDirectory.getDirectory)(searchFrom);
-    const result = await this.searchFromDirectory(startDirectory);
-    return result;
-  }
+		directory = path.dirname(directory);
+	}
+};
 
-  async searchFromDirectory(dir) {
-    const absoluteDir = _path.default.resolve(process.cwd(), dir);
+module.exports.sync = (name, options = {}) => {
+	let directory = path.resolve(options.cwd || '');
+	const {root} = path.parse(directory);
+	const paths = [].concat(name);
 
-    const run = async () => {
-      const result = await this.searchDirectory(absoluteDir);
-      const nextDir = this.nextDirectoryToSearch(absoluteDir, result);
+	const runMatcher = locateOptions => {
+		if (typeof name !== 'function') {
+			return locatePath.sync(paths, locateOptions);
+		}
 
-      if (nextDir) {
-        return this.searchFromDirectory(nextDir);
-      }
+		const foundPath = name(locateOptions.cwd);
+		if (typeof foundPath === 'string') {
+			return locatePath.sync([foundPath], locateOptions);
+		}
 
-      const transformResult = await this.config.transform(result);
-      return transformResult;
-    };
+		return foundPath;
+	};
 
-    if (this.searchCache) {
-      return (0, _cacheWrapper.cacheWrapper)(this.searchCache, absoluteDir, run);
-    }
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		const foundPath = runMatcher({...options, cwd: directory});
 
-    return run();
-  }
+		if (foundPath === stop) {
+			return;
+		}
 
-  async searchDirectory(dir) {
-    var _iteratorNormalCompletion = true;
-    var _didIteratorError = false;
+		if (foundPath) {
+			return path.resolve(directory, foundPath);
+		}
 
-    var _iteratorError;
+		if (directory === root) {
+			return;
+		}
 
-    try {
-      for (var _iterator = _asyncIterator(this.config.searchPlaces), _step, _value; _step = await _iterator.next(), _iteratorNormalCompletion = _step.done, _value = await _step.value, !_iteratorNormalCompletion; _iteratorNormalCompletion = true) {
-        const place = _value;
-        const placeResult = await this.loadSearchPlace(dir, place);
+		directory = path.dirname(directory);
+	}
+};
 
-        if (this.shouldSearchStopWithResult(placeResult) === true) {
-          return placeResult;
-        }
-      } // config not found
+module.exports.exists = pathExists;
 
-    } catch (err) {
-      _didIteratorError = true;
-      _iteratorError = err;
-    } finally {
-      try {
-        if (!_iteratorNormalCompletion && _iterator.return != null) {
-          await _iterator.return();
-        }
-      } finally {
-        if (_didIteratorError) {
-          throw _iteratorError;
-        }
-      }
-    }
+module.exports.sync.exists = pathExists.sync;
 
-    return null;
-  }
+module.exports.stop = stop;
 
-  async loadSearchPlace(dir, place) {
-    const filepath = _path.default.join(dir, place);
-
-    const fileContents = await (0, _readFile.readFile)(filepath);
-    const result = await this.createCosmiconfigResult(filepath, fileContents);
-    return result;
-  }
-
-  async loadFileContent(filepath, content) {
-    if (content === null) {
-      return null;
-    }
-
-    if (content.trim() === '') {
-      return undefined;
-    }
-
-    const loader = this.getLoaderEntryForFile(filepath);
-    const loaderResult = await loader(filepath, content);
-    return loaderResult;
-  }
-
-  async createCosmiconfigResult(filepath, content) {
-    const fileContent = await this.loadFileContent(filepath, content);
-    const result = this.loadedContentToCosmiconfigResult(filepath, fileContent);
-    return result;
-  }
-
-  async load(filepath) {
-    this.validateFilePath(filepath);
-
-    const absoluteFilePath = _path.default.resolve(process.cwd(), filepath);
-
-    const runLoad = async () => {
-      const fileContents = await (0, _readFile.readFile)(absoluteFilePath, {
-        throwNotFound: true
-      });
-      const result = await this.createCosmiconfigResult(absoluteFilePath, fileContents);
-      const transformResult = await this.config.transform(result);
-      return transformResult;
-    };
-
-    if (this.loadCache) {
-      return (0, _cacheWrapper.cacheWrapper)(this.loadCache, absoluteFilePath, runLoad);
-    }
-
-    return runLoad();
-  }
-
-}
-
-exports.Explorer = Explorer;
-//# sourceMappingURL=Explorer.js.map
 
 /***/ }),
 /* 342 */,
-/* 343 */,
+/* 343 */
+/***/ (function(module) {
+
+"use strict";
+
+module.exports = cb => new Promise(resolve => {
+	resolve(cb());
+});
+
+
+/***/ }),
 /* 344 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -28003,6 +28186,22 @@ function checkSanitizeDeprecation(opt) {
   }
 }
 
+// copied from https://stackoverflow.com/a/5450113/806777
+function repeatString(pattern, count) {
+  if (count < 1) {
+    return '';
+  }
+  let result = '';
+  while (count > 1) {
+    if (count & 1) {
+      result += pattern;
+    }
+    count >>= 1;
+    pattern += pattern;
+  }
+  return result + pattern;
+}
+
 module.exports = {
   escape,
   unescape,
@@ -28014,7 +28213,8 @@ module.exports = {
   splitCells,
   rtrim,
   findClosingBracket,
-  checkSanitizeDeprecation
+  checkSanitizeDeprecation,
+  repeatString
 };
 
 
@@ -28027,7 +28227,7 @@ module.exports = {
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 const gitLogParser = __webpack_require__(476);
-const getStream = __webpack_require__(145);
+const getStream = __webpack_require__(901);
 const execa = __webpack_require__(955);
 const debug = __webpack_require__(207)('semantic-release:git');
 const {GIT_NOTE_REF} = __webpack_require__(861);
@@ -28346,7 +28546,7 @@ async function getNote(ref, execaOptions) {
 }
 
 /**
- * Get and parse the JSON note of a given reference.
+ * Add JSON note to a given reference.
  *
  * @param {Object} note The object to save in the reference note.
  * @param {String} ref The Git reference to add the note to.
@@ -28382,15 +28582,73 @@ module.exports = {
 /***/ }),
 /* 351 */,
 /* 352 */,
-/* 353 */,
+/* 353 */
+/***/ (function(module) {
+
+"use strict";
+
+
+/* eslint no-invalid-this: 1 */
+
+var ERROR_MESSAGE = 'Function.prototype.bind called on incompatible ';
+var slice = Array.prototype.slice;
+var toStr = Object.prototype.toString;
+var funcType = '[object Function]';
+
+module.exports = function bind(that) {
+    var target = this;
+    if (typeof target !== 'function' || toStr.call(target) !== funcType) {
+        throw new TypeError(ERROR_MESSAGE + target);
+    }
+    var args = slice.call(arguments, 1);
+
+    var bound;
+    var binder = function () {
+        if (this instanceof bound) {
+            var result = target.apply(
+                this,
+                args.concat(slice.call(arguments))
+            );
+            if (Object(result) === result) {
+                return result;
+            }
+            return this;
+        } else {
+            return target.apply(
+                that,
+                args.concat(slice.call(arguments))
+            );
+        }
+    };
+
+    var boundLength = Math.max(0, target.length - args.length);
+    var boundArgs = [];
+    for (var i = 0; i < boundLength; i++) {
+        boundArgs.push('$' + i);
+    }
+
+    bound = Function('binder', 'return function (' + boundArgs.join(',') + '){ return binder.apply(this,arguments); }')(binder);
+
+    if (target.prototype) {
+        var Empty = function Empty() {};
+        Empty.prototype = target.prototype;
+        bound.prototype = new Empty();
+        Empty.prototype = null;
+    }
+
+    return bound;
+};
+
+
+/***/ }),
 /* 354 */,
 /* 355 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
-const errorEx = __webpack_require__(612);
-const fallback = __webpack_require__(80);
+const errorEx = __webpack_require__(518);
+const fallback = __webpack_require__(938);
 const {default: LinesAndColumns} = __webpack_require__(228);
 const {codeFrameColumns} = __webpack_require__(801);
 
@@ -28399,7 +28657,7 @@ const JSONError = errorEx('JSONError', {
 	codeFrame: errorEx.append('\n\n%s\n')
 });
 
-module.exports = (string, reviver, filename) => {
+const parseJson = (string, reviver, filename) => {
 	if (typeof reviver === 'string') {
 		filename = reviver;
 		reviver = null;
@@ -28414,7 +28672,7 @@ module.exports = (string, reviver, filename) => {
 		}
 	} catch (error) {
 		error.message = error.message.replace(/\n/g, '');
-		const indexMatch = error.message.match(/in JSON at position (\d+) while parsing near/);
+		const indexMatch = error.message.match(/in JSON at position (\d+) while parsing/);
 
 		const jsonError = new JSONError(error);
 		if (filename) {
@@ -28439,9 +28697,57 @@ module.exports = (string, reviver, filename) => {
 	}
 };
 
+parseJson.JSONError = JSONError;
+
+module.exports = parseJson;
+
 
 /***/ }),
-/* 356 */,
+/* 356 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
+/*!
+ * is-plain-object <https://github.com/jonschlinkert/is-plain-object>
+ *
+ * Copyright (c) 2014-2017, Jon Schlinkert.
+ * Released under the MIT License.
+ */
+
+function isObject(o) {
+  return Object.prototype.toString.call(o) === '[object Object]';
+}
+
+function isPlainObject(o) {
+  var ctor,prot;
+
+  if (isObject(o) === false) return false;
+
+  // If has modified constructor
+  ctor = o.constructor;
+  if (ctor === undefined) return true;
+
+  // If has modified prototype
+  prot = ctor.prototype;
+  if (isObject(prot) === false) return false;
+
+  // If constructor does not have an Object-specific method
+  if (prot.hasOwnProperty('isPrototypeOf') === false) {
+    return false;
+  }
+
+  // Most likely a plain Object
+  return true;
+}
+
+exports.isPlainObject = isPlainObject;
+
+
+/***/ }),
 /* 357 */
 /***/ (function(module) {
 
@@ -28487,7 +28793,7 @@ const outside = (version, range, hilo, options) => {
       throw new TypeError('Must provide a hilo val of "<" or ">"')
   }
 
-  // If it satisifes the range it is not outside
+  // If it satisfies the range it is not outside
   if (satisfies(version, range, options)) {
     return false
   }
@@ -28580,27 +28886,15 @@ const plugins = __webpack_require__(214);
 const {validatePlugin, parseConfig} = __webpack_require__(662);
 
 const CONFIG_NAME = 'release';
-const CONFIG_FILES = [
-  'package.json',
-  `.${CONFIG_NAME}rc`,
-  `.${CONFIG_NAME}rc.json`,
-  `.${CONFIG_NAME}rc.yaml`,
-  `.${CONFIG_NAME}rc.yml`,
-  `.${CONFIG_NAME}rc.js`,
-  `${CONFIG_NAME}.config.js`,
-];
 
 module.exports = async (context, cliOptions) => {
   const {cwd, env} = context;
-  const {config, filepath} = (await cosmiconfig(CONFIG_NAME, {searchPlaces: CONFIG_FILES}).search(cwd)) || {};
+  const {config, filepath} = (await cosmiconfig(CONFIG_NAME).search(cwd)) || {};
 
   debug('load config from: %s', filepath);
 
   // Merge config file options and CLI/API options
   let options = {...config, ...cliOptions};
-  if (options.ci === false) {
-    options.noCi = true;
-  }
 
   const pluginsPath = {};
   let extendPaths;
@@ -28657,6 +28951,10 @@ module.exports = async (context, cliOptions) => {
     ...pickBy(options, (option) => !isNil(option)),
     ...(options.branches ? {branches: castArray(options.branches)} : {}),
   };
+
+  if (options.ci === false) {
+    options.noCi = true;
+  }
 
   debug('options values: %O', options);
 
@@ -28718,782 +29016,38 @@ module.exports = {
 
 /***/ }),
 /* 366 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(module) {
 
-"use strict";
-
-
-const path = __webpack_require__(622);
-const scan = __webpack_require__(314);
-const parse = __webpack_require__(806);
-const utils = __webpack_require__(224);
-const constants = __webpack_require__(446);
-const isObject = val => val && typeof val === 'object' && !Array.isArray(val);
-
-/**
- * Creates a matcher function from one or more glob patterns. The
- * returned function takes a string to match as its first argument,
- * and returns true if the string is a match. The returned matcher
- * function also takes a boolean as the second argument that, when true,
- * returns an object with additional information.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch(glob[, options]);
- *
- * const isMatch = picomatch('*.!(*a)');
- * console.log(isMatch('a.a')); //=> false
- * console.log(isMatch('a.b')); //=> true
- * ```
- * @name picomatch
- * @param {String|Array} `globs` One or more glob patterns.
- * @param {Object=} `options`
- * @return {Function=} Returns a matcher function.
- * @api public
- */
-
-const picomatch = (glob, options, returnState = false) => {
-  if (Array.isArray(glob)) {
-    const fns = glob.map(input => picomatch(input, options, returnState));
-    const arrayMatcher = str => {
-      for (const isMatch of fns) {
-        const state = isMatch(str);
-        if (state) return state;
-      }
-      return false;
-    };
-    return arrayMatcher;
-  }
-
-  const isState = isObject(glob) && glob.tokens && glob.input;
-
-  if (glob === '' || (typeof glob !== 'string' && !isState)) {
-    throw new TypeError('Expected pattern to be a non-empty string');
-  }
-
-  const opts = options || {};
-  const posix = utils.isWindows(options);
-  const regex = isState
-    ? picomatch.compileRe(glob, options)
-    : picomatch.makeRe(glob, options, false, true);
-
-  const state = regex.state;
-  delete regex.state;
-
-  let isIgnored = () => false;
-  if (opts.ignore) {
-    const ignoreOpts = { ...options, ignore: null, onMatch: null, onResult: null };
-    isIgnored = picomatch(opts.ignore, ignoreOpts, returnState);
-  }
-
-  const matcher = (input, returnObject = false) => {
-    const { isMatch, match, output } = picomatch.test(input, regex, options, { glob, posix });
-    const result = { glob, state, regex, posix, input, output, match, isMatch };
-
-    if (typeof opts.onResult === 'function') {
-      opts.onResult(result);
-    }
-
-    if (isMatch === false) {
-      result.isMatch = false;
-      return returnObject ? result : false;
-    }
-
-    if (isIgnored(input)) {
-      if (typeof opts.onIgnore === 'function') {
-        opts.onIgnore(result);
-      }
-      result.isMatch = false;
-      return returnObject ? result : false;
-    }
-
-    if (typeof opts.onMatch === 'function') {
-      opts.onMatch(result);
-    }
-    return returnObject ? result : true;
-  };
-
-  if (returnState) {
-    matcher.state = state;
-  }
-
-  return matcher;
-};
-
-/**
- * Test `input` with the given `regex`. This is used by the main
- * `picomatch()` function to test the input string.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch.test(input, regex[, options]);
- *
- * console.log(picomatch.test('foo/bar', /^(?:([^/]*?)\/([^/]*?))$/));
- * // { isMatch: true, match: [ 'foo/', 'foo', 'bar' ], output: 'foo/bar' }
- * ```
- * @param {String} `input` String to test.
- * @param {RegExp} `regex`
- * @return {Object} Returns an object with matching info.
- * @api public
- */
-
-picomatch.test = (input, regex, options, { glob, posix } = {}) => {
-  if (typeof input !== 'string') {
-    throw new TypeError('Expected input to be a string');
-  }
-
-  if (input === '') {
-    return { isMatch: false, output: '' };
-  }
-
-  const opts = options || {};
-  const format = opts.format || (posix ? utils.toPosixSlashes : null);
-  let match = input === glob;
-  let output = (match && format) ? format(input) : input;
-
-  if (match === false) {
-    output = format ? format(input) : input;
-    match = output === glob;
-  }
-
-  if (match === false || opts.capture === true) {
-    if (opts.matchBase === true || opts.basename === true) {
-      match = picomatch.matchBase(input, regex, options, posix);
-    } else {
-      match = regex.exec(output);
-    }
-  }
-
-  return { isMatch: Boolean(match), match, output };
-};
-
-/**
- * Match the basename of a filepath.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch.matchBase(input, glob[, options]);
- * console.log(picomatch.matchBase('foo/bar.js', '*.js'); // true
- * ```
- * @param {String} `input` String to test.
- * @param {RegExp|String} `glob` Glob pattern or regex created by [.makeRe](#makeRe).
- * @return {Boolean}
- * @api public
- */
-
-picomatch.matchBase = (input, glob, options, posix = utils.isWindows(options)) => {
-  const regex = glob instanceof RegExp ? glob : picomatch.makeRe(glob, options);
-  return regex.test(path.basename(input));
-};
-
-/**
- * Returns true if **any** of the given glob `patterns` match the specified `string`.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch.isMatch(string, patterns[, options]);
- *
- * console.log(picomatch.isMatch('a.a', ['b.*', '*.a'])); //=> true
- * console.log(picomatch.isMatch('a.a', 'b.*')); //=> false
- * ```
- * @param {String|Array} str The string to test.
- * @param {String|Array} patterns One or more glob patterns to use for matching.
- * @param {Object} [options] See available [options](#options).
- * @return {Boolean} Returns true if any patterns match `str`
- * @api public
- */
-
-picomatch.isMatch = (str, patterns, options) => picomatch(patterns, options)(str);
-
-/**
- * Parse a glob pattern to create the source string for a regular
- * expression.
- *
- * ```js
- * const picomatch = require('picomatch');
- * const result = picomatch.parse(pattern[, options]);
- * ```
- * @param {String} `pattern`
- * @param {Object} `options`
- * @return {Object} Returns an object with useful properties and output to be used as a regex source string.
- * @api public
- */
-
-picomatch.parse = (pattern, options) => {
-  if (Array.isArray(pattern)) return pattern.map(p => picomatch.parse(p, options));
-  return parse(pattern, { ...options, fastpaths: false });
-};
-
-/**
- * Scan a glob pattern to separate the pattern into segments.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch.scan(input[, options]);
- *
- * const result = picomatch.scan('!./foo/*.js');
- * console.log(result);
- * { prefix: '!./',
- *   input: '!./foo/*.js',
- *   start: 3,
- *   base: 'foo',
- *   glob: '*.js',
- *   isBrace: false,
- *   isBracket: false,
- *   isGlob: true,
- *   isExtglob: false,
- *   isGlobstar: false,
- *   negated: true }
- * ```
- * @param {String} `input` Glob pattern to scan.
- * @param {Object} `options`
- * @return {Object} Returns an object with
- * @api public
- */
-
-picomatch.scan = (input, options) => scan(input, options);
-
-/**
- * Create a regular expression from a parsed glob pattern.
- *
- * ```js
- * const picomatch = require('picomatch');
- * const state = picomatch.parse('*.js');
- * // picomatch.compileRe(state[, options]);
- *
- * console.log(picomatch.compileRe(state));
- * //=> /^(?:(?!\.)(?=.)[^/]*?\.js)$/
- * ```
- * @param {String} `state` The object returned from the `.parse` method.
- * @param {Object} `options`
- * @return {RegExp} Returns a regex created from the given pattern.
- * @api public
- */
-
-picomatch.compileRe = (parsed, options, returnOutput = false, returnState = false) => {
-  if (returnOutput === true) {
-    return parsed.output;
-  }
-
-  const opts = options || {};
-  const prepend = opts.contains ? '' : '^';
-  const append = opts.contains ? '' : '$';
-
-  let source = `${prepend}(?:${parsed.output})${append}`;
-  if (parsed && parsed.negated === true) {
-    source = `^(?!${source}).*$`;
-  }
-
-  const regex = picomatch.toRegex(source, options);
-  if (returnState === true) {
-    regex.state = parsed;
-  }
-
-  return regex;
-};
-
-picomatch.makeRe = (input, options, returnOutput = false, returnState = false) => {
-  if (!input || typeof input !== 'string') {
-    throw new TypeError('Expected a non-empty string');
-  }
-
-  const opts = options || {};
-  let parsed = { negated: false, fastpaths: true };
-  let prefix = '';
-  let output;
-
-  if (input.startsWith('./')) {
-    input = input.slice(2);
-    prefix = parsed.prefix = './';
-  }
-
-  if (opts.fastpaths !== false && (input[0] === '.' || input[0] === '*')) {
-    output = parse.fastpaths(input, options);
-  }
-
-  if (output === undefined) {
-    parsed = parse(input, options);
-    parsed.prefix = prefix + (parsed.prefix || '');
-  } else {
-    parsed.output = output;
-  }
-
-  return picomatch.compileRe(parsed, options, returnOutput, returnState);
-};
-
-/**
- * Create a regular expression from the given regex source string.
- *
- * ```js
- * const picomatch = require('picomatch');
- * // picomatch.toRegex(source[, options]);
- *
- * const { output } = picomatch.parse('*.js');
- * console.log(picomatch.toRegex(output));
- * //=> /^(?:(?!\.)(?=.)[^/]*?\.js)$/
- * ```
- * @param {String} `source` Regular expression source string.
- * @param {Object} `options`
- * @return {RegExp}
- * @api public
- */
-
-picomatch.toRegex = (source, options) => {
-  try {
-    const opts = options || {};
-    return new RegExp(source, opts.flags || (opts.nocase ? 'i' : ''));
-  } catch (err) {
-    if (options && options.debug === true) throw err;
-    return /$^/;
-  }
-};
-
-/**
- * Picomatch constants.
- * @return {Object}
- */
-
-picomatch.constants = constants;
-
-/**
- * Expose "picomatch"
- */
-
-module.exports = picomatch;
-
+module.exports = {"topLevel":{"dependancies":"dependencies","dependecies":"dependencies","depdenencies":"dependencies","devEependencies":"devDependencies","depends":"dependencies","dev-dependencies":"devDependencies","devDependences":"devDependencies","devDepenencies":"devDependencies","devdependencies":"devDependencies","repostitory":"repository","repo":"repository","prefereGlobal":"preferGlobal","hompage":"homepage","hampage":"homepage","autohr":"author","autor":"author","contributers":"contributors","publicationConfig":"publishConfig","script":"scripts"},"bugs":{"web":"url","name":"url"},"script":{"server":"start","tests":"test"}};
 
 /***/ }),
 /* 367 */,
 /* 368 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-"use strict";
+const {isNil, uniqBy} = __webpack_require__(557);
+const semver = __webpack_require__(876);
+const {isMaintenanceRange} = __webpack_require__(946);
 
-module.exports = Yallist
+const maintenance = {
+  filter: ({name, range}) => (!isNil(range) && range !== false) || isMaintenanceRange(name),
+  branchValidator: ({range}) => (isNil(range) ? true : isMaintenanceRange(range)),
+  branchesValidator: (branches) => uniqBy(branches, ({range}) => semver.validRange(range)).length === branches.length,
+};
 
-Yallist.Node = Node
-Yallist.create = Yallist
+const prerelease = {
+  filter: ({prerelease}) => !isNil(prerelease) && prerelease !== false,
+  branchValidator: ({name, prerelease}) =>
+    Boolean(prerelease) && Boolean(semver.valid(`1.0.0-${prerelease === true ? name : prerelease}.1`)),
+  branchesValidator: (branches) => uniqBy(branches, 'prerelease').length === branches.length,
+};
 
-function Yallist (list) {
-  var self = this
-  if (!(self instanceof Yallist)) {
-    self = new Yallist()
-  }
+const release = {
+  filter: (branch) => !maintenance.filter(branch) && !prerelease.filter(branch),
+  branchesValidator: (branches) => branches.length <= 3 && branches.length > 0,
+};
 
-  self.tail = null
-  self.head = null
-  self.length = 0
-
-  if (list && typeof list.forEach === 'function') {
-    list.forEach(function (item) {
-      self.push(item)
-    })
-  } else if (arguments.length > 0) {
-    for (var i = 0, l = arguments.length; i < l; i++) {
-      self.push(arguments[i])
-    }
-  }
-
-  return self
-}
-
-Yallist.prototype.removeNode = function (node) {
-  if (node.list !== this) {
-    throw new Error('removing node which does not belong to this list')
-  }
-
-  var next = node.next
-  var prev = node.prev
-
-  if (next) {
-    next.prev = prev
-  }
-
-  if (prev) {
-    prev.next = next
-  }
-
-  if (node === this.head) {
-    this.head = next
-  }
-  if (node === this.tail) {
-    this.tail = prev
-  }
-
-  node.list.length--
-  node.next = null
-  node.prev = null
-  node.list = null
-
-  return next
-}
-
-Yallist.prototype.unshiftNode = function (node) {
-  if (node === this.head) {
-    return
-  }
-
-  if (node.list) {
-    node.list.removeNode(node)
-  }
-
-  var head = this.head
-  node.list = this
-  node.next = head
-  if (head) {
-    head.prev = node
-  }
-
-  this.head = node
-  if (!this.tail) {
-    this.tail = node
-  }
-  this.length++
-}
-
-Yallist.prototype.pushNode = function (node) {
-  if (node === this.tail) {
-    return
-  }
-
-  if (node.list) {
-    node.list.removeNode(node)
-  }
-
-  var tail = this.tail
-  node.list = this
-  node.prev = tail
-  if (tail) {
-    tail.next = node
-  }
-
-  this.tail = node
-  if (!this.head) {
-    this.head = node
-  }
-  this.length++
-}
-
-Yallist.prototype.push = function () {
-  for (var i = 0, l = arguments.length; i < l; i++) {
-    push(this, arguments[i])
-  }
-  return this.length
-}
-
-Yallist.prototype.unshift = function () {
-  for (var i = 0, l = arguments.length; i < l; i++) {
-    unshift(this, arguments[i])
-  }
-  return this.length
-}
-
-Yallist.prototype.pop = function () {
-  if (!this.tail) {
-    return undefined
-  }
-
-  var res = this.tail.value
-  this.tail = this.tail.prev
-  if (this.tail) {
-    this.tail.next = null
-  } else {
-    this.head = null
-  }
-  this.length--
-  return res
-}
-
-Yallist.prototype.shift = function () {
-  if (!this.head) {
-    return undefined
-  }
-
-  var res = this.head.value
-  this.head = this.head.next
-  if (this.head) {
-    this.head.prev = null
-  } else {
-    this.tail = null
-  }
-  this.length--
-  return res
-}
-
-Yallist.prototype.forEach = function (fn, thisp) {
-  thisp = thisp || this
-  for (var walker = this.head, i = 0; walker !== null; i++) {
-    fn.call(thisp, walker.value, i, this)
-    walker = walker.next
-  }
-}
-
-Yallist.prototype.forEachReverse = function (fn, thisp) {
-  thisp = thisp || this
-  for (var walker = this.tail, i = this.length - 1; walker !== null; i--) {
-    fn.call(thisp, walker.value, i, this)
-    walker = walker.prev
-  }
-}
-
-Yallist.prototype.get = function (n) {
-  for (var i = 0, walker = this.head; walker !== null && i < n; i++) {
-    // abort out of the list early if we hit a cycle
-    walker = walker.next
-  }
-  if (i === n && walker !== null) {
-    return walker.value
-  }
-}
-
-Yallist.prototype.getReverse = function (n) {
-  for (var i = 0, walker = this.tail; walker !== null && i < n; i++) {
-    // abort out of the list early if we hit a cycle
-    walker = walker.prev
-  }
-  if (i === n && walker !== null) {
-    return walker.value
-  }
-}
-
-Yallist.prototype.map = function (fn, thisp) {
-  thisp = thisp || this
-  var res = new Yallist()
-  for (var walker = this.head; walker !== null;) {
-    res.push(fn.call(thisp, walker.value, this))
-    walker = walker.next
-  }
-  return res
-}
-
-Yallist.prototype.mapReverse = function (fn, thisp) {
-  thisp = thisp || this
-  var res = new Yallist()
-  for (var walker = this.tail; walker !== null;) {
-    res.push(fn.call(thisp, walker.value, this))
-    walker = walker.prev
-  }
-  return res
-}
-
-Yallist.prototype.reduce = function (fn, initial) {
-  var acc
-  var walker = this.head
-  if (arguments.length > 1) {
-    acc = initial
-  } else if (this.head) {
-    walker = this.head.next
-    acc = this.head.value
-  } else {
-    throw new TypeError('Reduce of empty list with no initial value')
-  }
-
-  for (var i = 0; walker !== null; i++) {
-    acc = fn(acc, walker.value, i)
-    walker = walker.next
-  }
-
-  return acc
-}
-
-Yallist.prototype.reduceReverse = function (fn, initial) {
-  var acc
-  var walker = this.tail
-  if (arguments.length > 1) {
-    acc = initial
-  } else if (this.tail) {
-    walker = this.tail.prev
-    acc = this.tail.value
-  } else {
-    throw new TypeError('Reduce of empty list with no initial value')
-  }
-
-  for (var i = this.length - 1; walker !== null; i--) {
-    acc = fn(acc, walker.value, i)
-    walker = walker.prev
-  }
-
-  return acc
-}
-
-Yallist.prototype.toArray = function () {
-  var arr = new Array(this.length)
-  for (var i = 0, walker = this.head; walker !== null; i++) {
-    arr[i] = walker.value
-    walker = walker.next
-  }
-  return arr
-}
-
-Yallist.prototype.toArrayReverse = function () {
-  var arr = new Array(this.length)
-  for (var i = 0, walker = this.tail; walker !== null; i++) {
-    arr[i] = walker.value
-    walker = walker.prev
-  }
-  return arr
-}
-
-Yallist.prototype.slice = function (from, to) {
-  to = to || this.length
-  if (to < 0) {
-    to += this.length
-  }
-  from = from || 0
-  if (from < 0) {
-    from += this.length
-  }
-  var ret = new Yallist()
-  if (to < from || to < 0) {
-    return ret
-  }
-  if (from < 0) {
-    from = 0
-  }
-  if (to > this.length) {
-    to = this.length
-  }
-  for (var i = 0, walker = this.head; walker !== null && i < from; i++) {
-    walker = walker.next
-  }
-  for (; walker !== null && i < to; i++, walker = walker.next) {
-    ret.push(walker.value)
-  }
-  return ret
-}
-
-Yallist.prototype.sliceReverse = function (from, to) {
-  to = to || this.length
-  if (to < 0) {
-    to += this.length
-  }
-  from = from || 0
-  if (from < 0) {
-    from += this.length
-  }
-  var ret = new Yallist()
-  if (to < from || to < 0) {
-    return ret
-  }
-  if (from < 0) {
-    from = 0
-  }
-  if (to > this.length) {
-    to = this.length
-  }
-  for (var i = this.length, walker = this.tail; walker !== null && i > to; i--) {
-    walker = walker.prev
-  }
-  for (; walker !== null && i > from; i--, walker = walker.prev) {
-    ret.push(walker.value)
-  }
-  return ret
-}
-
-Yallist.prototype.splice = function (start, deleteCount, ...nodes) {
-  if (start > this.length) {
-    start = this.length - 1
-  }
-  if (start < 0) {
-    start = this.length + start;
-  }
-
-  for (var i = 0, walker = this.head; walker !== null && i < start; i++) {
-    walker = walker.next
-  }
-
-  var ret = []
-  for (var i = 0; walker && i < deleteCount; i++) {
-    ret.push(walker.value)
-    walker = this.removeNode(walker)
-  }
-  if (walker === null) {
-    walker = this.tail
-  }
-
-  if (walker !== this.head && walker !== this.tail) {
-    walker = walker.prev
-  }
-
-  for (var i = 0; i < nodes.length; i++) {
-    walker = insert(this, walker, nodes[i])
-  }
-  return ret;
-}
-
-Yallist.prototype.reverse = function () {
-  var head = this.head
-  var tail = this.tail
-  for (var walker = head; walker !== null; walker = walker.prev) {
-    var p = walker.prev
-    walker.prev = walker.next
-    walker.next = p
-  }
-  this.head = tail
-  this.tail = head
-  return this
-}
-
-function insert (self, node, value) {
-  var inserted = node === self.head ?
-    new Node(value, null, node, self) :
-    new Node(value, node, node.next, self)
-
-  if (inserted.next === null) {
-    self.tail = inserted
-  }
-  if (inserted.prev === null) {
-    self.head = inserted
-  }
-
-  self.length++
-
-  return inserted
-}
-
-function push (self, item) {
-  self.tail = new Node(item, self.tail, null, self)
-  if (!self.head) {
-    self.head = self.tail
-  }
-  self.length++
-}
-
-function unshift (self, item) {
-  self.head = new Node(item, null, self.head, self)
-  if (!self.tail) {
-    self.tail = self.head
-  }
-  self.length++
-}
-
-function Node (value, prev, next, list) {
-  if (!(this instanceof Node)) {
-    return new Node(value, prev, next, list)
-  }
-
-  this.list = list
-  this.value = value
-
-  if (prev) {
-    prev.next = this
-    this.prev = prev
-  } else {
-    this.prev = null
-  }
-
-  if (next) {
-    next.prev = this
-    this.next = next
-  } else {
-    this.next = null
-  }
-}
-
-try {
-  // add if support for Symbol.iterator is present
-  __webpack_require__(396)(Yallist)
-} catch (er) {}
+module.exports = {maintenance, prerelease, release};
 
 
 /***/ }),
@@ -29503,161 +29057,115 @@ try {
 
 "use strict";
 
-var gitHosts = __webpack_require__(139)
-/* eslint-disable node/no-deprecated-api */
+const gitHosts = __webpack_require__(139)
 
-// copy-pasta util._extend from node's source, to avoid pulling
-// the whole util module into peoples' webpack bundles.
-/* istanbul ignore next */
-var extend = Object.assign || function _extend (target, source) {
-  // Don't do anything if source isn't an object
-  if (source === null || typeof source !== 'object') return target
-
-  const keys = Object.keys(source)
-  let i = keys.length
-  while (i--) {
-    target[keys[i]] = source[keys[i]]
+class GitHost {
+  constructor (type, user, auth, project, committish, defaultRepresentation, opts = {}) {
+    Object.assign(this, gitHosts[type])
+    this.type = type
+    this.user = user
+    this.auth = auth
+    this.project = project
+    this.committish = committish
+    this.default = defaultRepresentation
+    this.opts = opts
   }
-  return target
-}
 
+  hash () {
+    return this.committish ? `#${this.committish}` : ''
+  }
+
+  ssh (opts) {
+    return this._fill(this.sshtemplate, opts)
+  }
+
+  _fill (template, opts) {
+    if (typeof template === 'function') {
+      const options = { ...this, ...this.opts, ...opts }
+
+      // the path should always be set so we don't end up with 'undefined' in urls
+      if (!options.path) {
+        options.path = ''
+      }
+
+      // template functions will insert the leading slash themselves
+      if (options.path.startsWith('/')) {
+        options.path = options.path.slice(1)
+      }
+
+      if (options.noCommittish) {
+        options.committish = null
+      }
+
+      const result = template(options)
+      return options.noGitPlus && result.startsWith('git+') ? result.slice(4) : result
+    }
+
+    return null
+  }
+
+  sshurl (opts) {
+    return this._fill(this.sshurltemplate, opts)
+  }
+
+  browse (path, fragment, opts) {
+    // not a string, treat path as opts
+    if (typeof path !== 'string') {
+      return this._fill(this.browsetemplate, path)
+    }
+
+    if (typeof fragment !== 'string') {
+      opts = fragment
+      fragment = null
+    }
+    return this._fill(this.browsefiletemplate, { ...opts, fragment, path })
+  }
+
+  docs (opts) {
+    return this._fill(this.docstemplate, opts)
+  }
+
+  bugs (opts) {
+    return this._fill(this.bugstemplate, opts)
+  }
+
+  https (opts) {
+    return this._fill(this.httpstemplate, opts)
+  }
+
+  git (opts) {
+    return this._fill(this.gittemplate, opts)
+  }
+
+  shortcut (opts) {
+    return this._fill(this.shortcuttemplate, opts)
+  }
+
+  path (opts) {
+    return this._fill(this.pathtemplate, opts)
+  }
+
+  tarball (opts) {
+    return this._fill(this.tarballtemplate, { ...opts, noCommittish: false })
+  }
+
+  file (path, opts) {
+    return this._fill(this.filetemplate, { ...opts, path })
+  }
+
+  getDefaultRepresentation () {
+    return this.default
+  }
+
+  toString (opts) {
+    if (this.default && typeof this[this.default] === 'function') {
+      return this[this.default](opts)
+    }
+
+    return this.sshurl(opts)
+  }
+}
 module.exports = GitHost
-function GitHost (type, user, auth, project, committish, defaultRepresentation, opts) {
-  var gitHostInfo = this
-  gitHostInfo.type = type
-  Object.keys(gitHosts[type]).forEach(function (key) {
-    gitHostInfo[key] = gitHosts[type][key]
-  })
-  gitHostInfo.user = user
-  gitHostInfo.auth = auth
-  gitHostInfo.project = project
-  gitHostInfo.committish = committish
-  gitHostInfo.default = defaultRepresentation
-  gitHostInfo.opts = opts || {}
-}
-
-GitHost.prototype.hash = function () {
-  return this.committish ? '#' + this.committish : ''
-}
-
-GitHost.prototype._fill = function (template, opts) {
-  if (!template) return
-  var vars = extend({}, opts)
-  vars.path = vars.path ? vars.path.replace(/^[/]+/g, '') : ''
-  opts = extend(extend({}, this.opts), opts)
-  var self = this
-  Object.keys(this).forEach(function (key) {
-    if (self[key] != null && vars[key] == null) vars[key] = self[key]
-  })
-  var rawAuth = vars.auth
-  var rawcommittish = vars.committish
-  var rawFragment = vars.fragment
-  var rawPath = vars.path
-  var rawProject = vars.project
-  Object.keys(vars).forEach(function (key) {
-    var value = vars[key]
-    if ((key === 'path' || key === 'project') && typeof value === 'string') {
-      vars[key] = value.split('/').map(function (pathComponent) {
-        return encodeURIComponent(pathComponent)
-      }).join('/')
-    } else if (key !== 'domain') {
-      vars[key] = encodeURIComponent(value)
-    }
-  })
-  vars['auth@'] = rawAuth ? rawAuth + '@' : ''
-  vars['#fragment'] = rawFragment ? '#' + this.hashformat(rawFragment) : ''
-  vars.fragment = vars.fragment ? vars.fragment : ''
-  vars['#path'] = rawPath ? '#' + this.hashformat(rawPath) : ''
-  vars['/path'] = vars.path ? '/' + vars.path : ''
-  vars.projectPath = rawProject.split('/').map(encodeURIComponent).join('/')
-  if (opts.noCommittish) {
-    vars['#committish'] = ''
-    vars['/tree/committish'] = ''
-    vars['/committish'] = ''
-    vars.committish = ''
-  } else {
-    vars['#committish'] = rawcommittish ? '#' + rawcommittish : ''
-    vars['/tree/committish'] = vars.committish
-      ? '/' + vars.treepath + '/' + vars.committish
-      : ''
-    vars['/committish'] = vars.committish ? '/' + vars.committish : ''
-    vars.committish = vars.committish || 'master'
-  }
-  var res = template
-  Object.keys(vars).forEach(function (key) {
-    res = res.replace(new RegExp('[{]' + key + '[}]', 'g'), vars[key])
-  })
-  if (opts.noGitPlus) {
-    return res.replace(/^git[+]/, '')
-  } else {
-    return res
-  }
-}
-
-GitHost.prototype.ssh = function (opts) {
-  return this._fill(this.sshtemplate, opts)
-}
-
-GitHost.prototype.sshurl = function (opts) {
-  return this._fill(this.sshurltemplate, opts)
-}
-
-GitHost.prototype.browse = function (P, F, opts) {
-  if (typeof P === 'string') {
-    if (typeof F !== 'string') {
-      opts = F
-      F = null
-    }
-    return this._fill(this.browsefiletemplate, extend({
-      fragment: F,
-      path: P
-    }, opts))
-  } else {
-    return this._fill(this.browsetemplate, P)
-  }
-}
-
-GitHost.prototype.docs = function (opts) {
-  return this._fill(this.docstemplate, opts)
-}
-
-GitHost.prototype.bugs = function (opts) {
-  return this._fill(this.bugstemplate, opts)
-}
-
-GitHost.prototype.https = function (opts) {
-  return this._fill(this.httpstemplate, opts)
-}
-
-GitHost.prototype.git = function (opts) {
-  return this._fill(this.gittemplate, opts)
-}
-
-GitHost.prototype.shortcut = function (opts) {
-  return this._fill(this.shortcuttemplate, opts)
-}
-
-GitHost.prototype.path = function (opts) {
-  return this._fill(this.pathtemplate, opts)
-}
-
-GitHost.prototype.tarball = function (opts_) {
-  var opts = extend({}, opts_, { noCommittish: false })
-  return this._fill(this.tarballtemplate, opts)
-}
-
-GitHost.prototype.file = function (P, opts) {
-  return this._fill(this.filetemplate, extend({ path: P }, opts))
-}
-
-GitHost.prototype.getDefaultRepresentation = function () {
-  return this.default
-}
-
-GitHost.prototype.toString = function (opts) {
-  if (this.default && typeof this[this.default] === 'function') return this[this.default](opts)
-  return this.sshurl(opts)
-}
 
 
 /***/ }),
@@ -29695,102 +29203,7 @@ module.exports = {
 
 
 /***/ }),
-/* 380 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const path = __webpack_require__(622);
-const locatePath = __webpack_require__(58);
-const pathExists = __webpack_require__(269);
-
-const stop = Symbol('findUp.stop');
-
-module.exports = async (name, options = {}) => {
-	let directory = path.resolve(options.cwd || '');
-	const {root} = path.parse(directory);
-	const paths = [].concat(name);
-
-	const runMatcher = async locateOptions => {
-		if (typeof name !== 'function') {
-			return locatePath(paths, locateOptions);
-		}
-
-		const foundPath = await name(locateOptions.cwd);
-		if (typeof foundPath === 'string') {
-			return locatePath([foundPath], locateOptions);
-		}
-
-		return foundPath;
-	};
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		// eslint-disable-next-line no-await-in-loop
-		const foundPath = await runMatcher({...options, cwd: directory});
-
-		if (foundPath === stop) {
-			return;
-		}
-
-		if (foundPath) {
-			return path.resolve(directory, foundPath);
-		}
-
-		if (directory === root) {
-			return;
-		}
-
-		directory = path.dirname(directory);
-	}
-};
-
-module.exports.sync = (name, options = {}) => {
-	let directory = path.resolve(options.cwd || '');
-	const {root} = path.parse(directory);
-	const paths = [].concat(name);
-
-	const runMatcher = locateOptions => {
-		if (typeof name !== 'function') {
-			return locatePath.sync(paths, locateOptions);
-		}
-
-		const foundPath = name(locateOptions.cwd);
-		if (typeof foundPath === 'string') {
-			return locatePath.sync([foundPath], locateOptions);
-		}
-
-		return foundPath;
-	};
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const foundPath = runMatcher({...options, cwd: directory});
-
-		if (foundPath === stop) {
-			return;
-		}
-
-		if (foundPath) {
-			return path.resolve(directory, foundPath);
-		}
-
-		if (directory === root) {
-			return;
-		}
-
-		directory = path.dirname(directory);
-	}
-};
-
-module.exports.exists = pathExists;
-
-module.exports.sync.exists = pathExists.sync;
-
-module.exports.stop = stop;
-
-
-/***/ }),
+/* 380 */,
 /* 381 */,
 /* 382 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -29841,9 +29254,7 @@ module.exports = (ast, options = {}) => {
 
 Object.defineProperty(exports, '__esModule', { value: true });
 
-function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'default' in ex) ? ex['default'] : ex; }
-
-var isPlainObject = _interopDefault(__webpack_require__(696));
+var isPlainObject = __webpack_require__(356);
 var universalUserAgent = __webpack_require__(796);
 
 function lowercaseKeys(object) {
@@ -29860,7 +29271,7 @@ function lowercaseKeys(object) {
 function mergeDeep(defaults, options) {
   const result = Object.assign({}, defaults);
   Object.keys(options).forEach(key => {
-    if (isPlainObject(options[key])) {
+    if (isPlainObject.isPlainObject(options[key])) {
       if (!(key in defaults)) Object.assign(result, {
         [key]: options[key]
       });else result[key] = mergeDeep(defaults[key], options[key]);
@@ -29871,6 +29282,16 @@ function mergeDeep(defaults, options) {
     }
   });
   return result;
+}
+
+function removeUndefinedProperties(obj) {
+  for (const key in obj) {
+    if (obj[key] === undefined) {
+      delete obj[key];
+    }
+  }
+
+  return obj;
 }
 
 function merge(defaults, route, options) {
@@ -29887,7 +29308,10 @@ function merge(defaults, route, options) {
   } // lowercase header names before merging with defaults to avoid duplicates
 
 
-  options.headers = lowercaseKeys(options.headers);
+  options.headers = lowercaseKeys(options.headers); // remove properties with undefined values before merging
+
+  removeUndefinedProperties(options);
+  removeUndefinedProperties(options.headers);
   const mergedOptions = mergeDeep(defaults || {}, options); // mediaType.previews arrays are merged, instead of overwritten
 
   if (defaults && defaults.mediaType.previews.length) {
@@ -30109,7 +29533,7 @@ function parse(options) {
   // https://fetch.spec.whatwg.org/#methods
   let method = options.method.toUpperCase(); // replace :varname with {varname} to make it RFC 6570 compatible
 
-  let url = (options.url || "/").replace(/:([a-z]\w+)/g, "{+$1}");
+  let url = (options.url || "/").replace(/:([a-z]\w+)/g, "{$1}");
   let headers = Object.assign({}, options.headers);
   let body;
   let parameters = omit(options, ["method", "baseUrl", "url", "headers", "request", "mediaType"]); // extract variable names from URL to calculate remaining variables later
@@ -30123,9 +29547,9 @@ function parse(options) {
 
   const omittedParameters = Object.keys(options).filter(option => urlVariableNames.includes(option)).concat("baseUrl");
   const remainingParameters = omit(parameters, omittedParameters);
-  const isBinaryRequset = /application\/octet-stream/i.test(headers.accept);
+  const isBinaryRequest = /application\/octet-stream/i.test(headers.accept);
 
-  if (!isBinaryRequset) {
+  if (!isBinaryRequest) {
     if (options.mediaType.format) {
       // e.g. application/vnd.github.v3+json => application/vnd.github.v3.raw
       headers.accept = headers.accept.split(/,/).map(preview => preview.replace(/application\/vnd(\.\w+)(\.v3)?(\.\w+)?(\+json)?$/, `application/vnd$1$2.${options.mediaType.format}`)).join(",");
@@ -30194,7 +29618,7 @@ function withDefaults(oldDefaults, newDefaults) {
   });
 }
 
-const VERSION = "6.0.5";
+const VERSION = "6.0.11";
 
 const userAgent = `octokit-endpoint.js/${VERSION} ${universalUserAgent.getUserAgent()}`; // DEFAULTS has all properties set that EndpointOptions has, except url.
 // So we use RequestParameters and add method as additional required property.
@@ -30282,7 +29706,7 @@ module.exports = {
 /* 394 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-const execa = __webpack_require__(955);
+const execa = __webpack_require__(848);
 
 function head(options) {
 	try {
@@ -30496,7 +29920,234 @@ module.exports = {
 
 
 /***/ }),
-/* 404 */,
+/* 404 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const Range = __webpack_require__(124)
+const Comparator = __webpack_require__(174)
+const { ANY } = Comparator
+const satisfies = __webpack_require__(310)
+const compare = __webpack_require__(874)
+
+// Complex range `r1 || r2 || ...` is a subset of `R1 || R2 || ...` iff:
+// - Every simple range `r1, r2, ...` is a null set, OR
+// - Every simple range `r1, r2, ...` which is not a null set is a subset of
+//   some `R1, R2, ...`
+//
+// Simple range `c1 c2 ...` is a subset of simple range `C1 C2 ...` iff:
+// - If c is only the ANY comparator
+//   - If C is only the ANY comparator, return true
+//   - Else if in prerelease mode, return false
+//   - else replace c with `[>=0.0.0]`
+// - If C is only the ANY comparator
+//   - if in prerelease mode, return true
+//   - else replace C with `[>=0.0.0]`
+// - Let EQ be the set of = comparators in c
+// - If EQ is more than one, return true (null set)
+// - Let GT be the highest > or >= comparator in c
+// - Let LT be the lowest < or <= comparator in c
+// - If GT and LT, and GT.semver > LT.semver, return true (null set)
+// - If any C is a = range, and GT or LT are set, return false
+// - If EQ
+//   - If GT, and EQ does not satisfy GT, return true (null set)
+//   - If LT, and EQ does not satisfy LT, return true (null set)
+//   - If EQ satisfies every C, return true
+//   - Else return false
+// - If GT
+//   - If GT.semver is lower than any > or >= comp in C, return false
+//   - If GT is >=, and GT.semver does not satisfy every C, return false
+//   - If GT.semver has a prerelease, and not in prerelease mode
+//     - If no C has a prerelease and the GT.semver tuple, return false
+// - If LT
+//   - If LT.semver is greater than any < or <= comp in C, return false
+//   - If LT is <=, and LT.semver does not satisfy every C, return false
+//   - If GT.semver has a prerelease, and not in prerelease mode
+//     - If no C has a prerelease and the LT.semver tuple, return false
+// - Else return true
+
+const subset = (sub, dom, options = {}) => {
+  if (sub === dom)
+    return true
+
+  sub = new Range(sub, options)
+  dom = new Range(dom, options)
+  let sawNonNull = false
+
+  OUTER: for (const simpleSub of sub.set) {
+    for (const simpleDom of dom.set) {
+      const isSub = simpleSubset(simpleSub, simpleDom, options)
+      sawNonNull = sawNonNull || isSub !== null
+      if (isSub)
+        continue OUTER
+    }
+    // the null set is a subset of everything, but null simple ranges in
+    // a complex range should be ignored.  so if we saw a non-null range,
+    // then we know this isn't a subset, but if EVERY simple range was null,
+    // then it is a subset.
+    if (sawNonNull)
+      return false
+  }
+  return true
+}
+
+const simpleSubset = (sub, dom, options) => {
+  if (sub === dom)
+    return true
+
+  if (sub.length === 1 && sub[0].semver === ANY) {
+    if (dom.length === 1 && dom[0].semver === ANY)
+      return true
+    else if (options.includePrerelease)
+      sub = [ new Comparator('>=0.0.0-0') ]
+    else
+      sub = [ new Comparator('>=0.0.0') ]
+  }
+
+  if (dom.length === 1 && dom[0].semver === ANY) {
+    if (options.includePrerelease)
+      return true
+    else
+      dom = [ new Comparator('>=0.0.0') ]
+  }
+
+  const eqSet = new Set()
+  let gt, lt
+  for (const c of sub) {
+    if (c.operator === '>' || c.operator === '>=')
+      gt = higherGT(gt, c, options)
+    else if (c.operator === '<' || c.operator === '<=')
+      lt = lowerLT(lt, c, options)
+    else
+      eqSet.add(c.semver)
+  }
+
+  if (eqSet.size > 1)
+    return null
+
+  let gtltComp
+  if (gt && lt) {
+    gtltComp = compare(gt.semver, lt.semver, options)
+    if (gtltComp > 0)
+      return null
+    else if (gtltComp === 0 && (gt.operator !== '>=' || lt.operator !== '<='))
+      return null
+  }
+
+  // will iterate one or zero times
+  for (const eq of eqSet) {
+    if (gt && !satisfies(eq, String(gt), options))
+      return null
+
+    if (lt && !satisfies(eq, String(lt), options))
+      return null
+
+    for (const c of dom) {
+      if (!satisfies(eq, String(c), options))
+        return false
+    }
+
+    return true
+  }
+
+  let higher, lower
+  let hasDomLT, hasDomGT
+  // if the subset has a prerelease, we need a comparator in the superset
+  // with the same tuple and a prerelease, or it's not a subset
+  let needDomLTPre = lt &&
+    !options.includePrerelease &&
+    lt.semver.prerelease.length ? lt.semver : false
+  let needDomGTPre = gt &&
+    !options.includePrerelease &&
+    gt.semver.prerelease.length ? gt.semver : false
+  // exception: <1.2.3-0 is the same as <1.2.3
+  if (needDomLTPre && needDomLTPre.prerelease.length === 1 &&
+      lt.operator === '<' && needDomLTPre.prerelease[0] === 0) {
+    needDomLTPre = false
+  }
+
+  for (const c of dom) {
+    hasDomGT = hasDomGT || c.operator === '>' || c.operator === '>='
+    hasDomLT = hasDomLT || c.operator === '<' || c.operator === '<='
+    if (gt) {
+      if (needDomGTPre) {
+        if (c.semver.prerelease && c.semver.prerelease.length &&
+            c.semver.major === needDomGTPre.major &&
+            c.semver.minor === needDomGTPre.minor &&
+            c.semver.patch === needDomGTPre.patch) {
+          needDomGTPre = false
+        }
+      }
+      if (c.operator === '>' || c.operator === '>=') {
+        higher = higherGT(gt, c, options)
+        if (higher === c && higher !== gt)
+          return false
+      } else if (gt.operator === '>=' && !satisfies(gt.semver, String(c), options))
+        return false
+    }
+    if (lt) {
+      if (needDomLTPre) {
+        if (c.semver.prerelease && c.semver.prerelease.length &&
+            c.semver.major === needDomLTPre.major &&
+            c.semver.minor === needDomLTPre.minor &&
+            c.semver.patch === needDomLTPre.patch) {
+          needDomLTPre = false
+        }
+      }
+      if (c.operator === '<' || c.operator === '<=') {
+        lower = lowerLT(lt, c, options)
+        if (lower === c && lower !== lt)
+          return false
+      } else if (lt.operator === '<=' && !satisfies(lt.semver, String(c), options))
+        return false
+    }
+    if (!c.operator && (lt || gt) && gtltComp !== 0)
+      return false
+  }
+
+  // if there was a < or >, and nothing in the dom, then must be false
+  // UNLESS it was limited by another range in the other direction.
+  // Eg, >1.0.0 <1.0.1 is still a subset of <2.0.0
+  if (gt && hasDomLT && !lt && gtltComp !== 0)
+    return false
+
+  if (lt && hasDomGT && !gt && gtltComp !== 0)
+    return false
+
+  // we needed a prerelease range in a specific tuple, but didn't get one
+  // then this isn't a subset.  eg >=1.2.3-pre is not a subset of >=1.0.0,
+  // because it includes prereleases in the 1.2.3 tuple
+  if (needDomGTPre || needDomLTPre)
+    return false
+
+  return true
+}
+
+// >=1.2.3 is lower than >1.2.3
+const higherGT = (a, b, options) => {
+  if (!a)
+    return b
+  const comp = compare(a.semver, b.semver, options)
+  return comp > 0 ? a
+    : comp < 0 ? b
+    : b.operator === '>' && a.operator === '>=' ? b
+    : a
+}
+
+// <=1.2.3 is higher than <1.2.3
+const lowerLT = (a, b, options) => {
+  if (!a)
+    return b
+  const comp = compare(a.semver, b.semver, options)
+  return comp < 0 ? a
+    : comp > 0 ? b
+    : b.operator === '<' && a.operator === '<=' ? b
+    : a
+}
+
+module.exports = subset
+
+
+/***/ }),
 /* 405 */,
 /* 406 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -30766,12 +30417,21 @@ module.exports = {
  * This is the web browser implementation of `debug()`.
  */
 
-exports.log = log;
 exports.formatArgs = formatArgs;
 exports.save = save;
 exports.load = load;
 exports.useColors = useColors;
 exports.storage = localstorage();
+exports.destroy = (() => {
+	let warned = false;
+
+	return () => {
+		if (!warned) {
+			warned = true;
+			console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+		}
+	};
+})();
 
 /**
  * Colors.
@@ -30932,18 +30592,14 @@ function formatArgs(args) {
 }
 
 /**
- * Invokes `console.log()` when available.
- * No-op when `console.log` is not a "function".
+ * Invokes `console.debug()` when available.
+ * No-op when `console.debug` is not a "function".
+ * If `console.debug` is not available, falls back
+ * to `console.log`.
  *
  * @api public
  */
-function log(...args) {
-	// This hackery is required for IE8/9, where
-	// the `console.log` function doesn't have 'apply'
-	return typeof console === 'object' &&
-		console.log &&
-		console.log(...args);
-}
+exports.log = console.debug || console.log || (() => {});
 
 /**
  * Save `namespaces`.
@@ -31245,7 +30901,7 @@ const services = {
 	codeship: __webpack_require__(391),
 	drone: __webpack_require__(525),
 	github: __webpack_require__(307),
-	gitlab: __webpack_require__(695),
+	gitlab: __webpack_require__(95),
 	jenkins: __webpack_require__(250),
 	puppet: __webpack_require__(407),
 	sail: __webpack_require__(853),
@@ -31338,540 +30994,50 @@ var _identifier = __webpack_require__(674);
 var _keyword = __webpack_require__(84);
 
 /***/ }),
-/* 421 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-
-
-var PlainValue = __webpack_require__(513);
-var resolveSeq = __webpack_require__(232);
-var warnings = __webpack_require__(626);
-
-function createMap(schema, obj, ctx) {
-  const map = new resolveSeq.YAMLMap(schema);
-
-  if (obj instanceof Map) {
-    for (const [key, value] of obj) map.items.push(schema.createPair(key, value, ctx));
-  } else if (obj && typeof obj === 'object') {
-    for (const key of Object.keys(obj)) map.items.push(schema.createPair(key, obj[key], ctx));
-  }
-
-  if (typeof schema.sortMapEntries === 'function') {
-    map.items.sort(schema.sortMapEntries);
-  }
-
-  return map;
-}
-
-const map = {
-  createNode: createMap,
-  default: true,
-  nodeClass: resolveSeq.YAMLMap,
-  tag: 'tag:yaml.org,2002:map',
-  resolve: resolveSeq.resolveMap
-};
-
-function createSeq(schema, obj, ctx) {
-  const seq = new resolveSeq.YAMLSeq(schema);
-
-  if (obj && obj[Symbol.iterator]) {
-    for (const it of obj) {
-      const v = schema.createNode(it, ctx.wrapScalars, null, ctx);
-      seq.items.push(v);
-    }
-  }
-
-  return seq;
-}
-
-const seq = {
-  createNode: createSeq,
-  default: true,
-  nodeClass: resolveSeq.YAMLSeq,
-  tag: 'tag:yaml.org,2002:seq',
-  resolve: resolveSeq.resolveSeq
-};
-
-const string = {
-  identify: value => typeof value === 'string',
-  default: true,
-  tag: 'tag:yaml.org,2002:str',
-  resolve: resolveSeq.resolveString,
-
-  stringify(item, ctx, onComment, onChompKeep) {
-    ctx = Object.assign({
-      actualString: true
-    }, ctx);
-    return resolveSeq.stringifyString(item, ctx, onComment, onChompKeep);
-  },
-
-  options: resolveSeq.strOptions
-};
-
-const failsafe = [map, seq, string];
-
-/* global BigInt */
-
-const intIdentify = value => typeof value === 'bigint' || Number.isInteger(value);
-
-const intResolve = (src, part, radix) => resolveSeq.intOptions.asBigInt ? BigInt(src) : parseInt(part, radix);
-
-function intStringify(node, radix, prefix) {
-  const {
-    value
-  } = node;
-  if (intIdentify(value) && value >= 0) return prefix + value.toString(radix);
-  return resolveSeq.stringifyNumber(node);
-}
-
-const nullObj = {
-  identify: value => value == null,
-  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
-  default: true,
-  tag: 'tag:yaml.org,2002:null',
-  test: /^(?:~|[Nn]ull|NULL)?$/,
-  resolve: () => null,
-  options: resolveSeq.nullOptions,
-  stringify: () => resolveSeq.nullOptions.nullStr
-};
-const boolObj = {
-  identify: value => typeof value === 'boolean',
-  default: true,
-  tag: 'tag:yaml.org,2002:bool',
-  test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
-  resolve: str => str[0] === 't' || str[0] === 'T',
-  options: resolveSeq.boolOptions,
-  stringify: ({
-    value
-  }) => value ? resolveSeq.boolOptions.trueStr : resolveSeq.boolOptions.falseStr
-};
-const octObj = {
-  identify: value => intIdentify(value) && value >= 0,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'OCT',
-  test: /^0o([0-7]+)$/,
-  resolve: (str, oct) => intResolve(str, oct, 8),
-  options: resolveSeq.intOptions,
-  stringify: node => intStringify(node, 8, '0o')
-};
-const intObj = {
-  identify: intIdentify,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  test: /^[-+]?[0-9]+$/,
-  resolve: str => intResolve(str, str, 10),
-  options: resolveSeq.intOptions,
-  stringify: resolveSeq.stringifyNumber
-};
-const hexObj = {
-  identify: value => intIdentify(value) && value >= 0,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'HEX',
-  test: /^0x([0-9a-fA-F]+)$/,
-  resolve: (str, hex) => intResolve(str, hex, 16),
-  options: resolveSeq.intOptions,
-  stringify: node => intStringify(node, 16, '0x')
-};
-const nanObj = {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  test: /^(?:[-+]?\.inf|(\.nan))$/i,
-  resolve: (str, nan) => nan ? NaN : str[0] === '-' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
-  stringify: resolveSeq.stringifyNumber
-};
-const expObj = {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  format: 'EXP',
-  test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
-  resolve: str => parseFloat(str),
-  stringify: ({
-    value
-  }) => Number(value).toExponential()
-};
-const floatObj = {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  test: /^[-+]?(?:\.([0-9]+)|[0-9]+\.([0-9]*))$/,
-
-  resolve(str, frac1, frac2) {
-    const frac = frac1 || frac2;
-    const node = new resolveSeq.Scalar(parseFloat(str));
-    if (frac && frac[frac.length - 1] === '0') node.minFractionDigits = frac.length;
-    return node;
-  },
-
-  stringify: resolveSeq.stringifyNumber
-};
-const core = failsafe.concat([nullObj, boolObj, octObj, intObj, hexObj, nanObj, expObj, floatObj]);
-
-/* global BigInt */
-
-const intIdentify$1 = value => typeof value === 'bigint' || Number.isInteger(value);
-
-const stringifyJSON = ({
-  value
-}) => JSON.stringify(value);
-
-const json = [map, seq, {
-  identify: value => typeof value === 'string',
-  default: true,
-  tag: 'tag:yaml.org,2002:str',
-  resolve: resolveSeq.resolveString,
-  stringify: stringifyJSON
-}, {
-  identify: value => value == null,
-  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
-  default: true,
-  tag: 'tag:yaml.org,2002:null',
-  test: /^null$/,
-  resolve: () => null,
-  stringify: stringifyJSON
-}, {
-  identify: value => typeof value === 'boolean',
-  default: true,
-  tag: 'tag:yaml.org,2002:bool',
-  test: /^true|false$/,
-  resolve: str => str === 'true',
-  stringify: stringifyJSON
-}, {
-  identify: intIdentify$1,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  test: /^-?(?:0|[1-9][0-9]*)$/,
-  resolve: str => resolveSeq.intOptions.asBigInt ? BigInt(str) : parseInt(str, 10),
-  stringify: ({
-    value
-  }) => intIdentify$1(value) ? value.toString() : JSON.stringify(value)
-}, {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
-  resolve: str => parseFloat(str),
-  stringify: stringifyJSON
-}];
-
-json.scalarFallback = str => {
-  throw new SyntaxError(`Unresolved plain scalar ${JSON.stringify(str)}`);
-};
-
-/* global BigInt */
-
-const boolStringify = ({
-  value
-}) => value ? resolveSeq.boolOptions.trueStr : resolveSeq.boolOptions.falseStr;
-
-const intIdentify$2 = value => typeof value === 'bigint' || Number.isInteger(value);
-
-function intResolve$1(sign, src, radix) {
-  let str = src.replace(/_/g, '');
-
-  if (resolveSeq.intOptions.asBigInt) {
-    switch (radix) {
-      case 2:
-        str = `0b${str}`;
-        break;
-
-      case 8:
-        str = `0o${str}`;
-        break;
-
-      case 16:
-        str = `0x${str}`;
-        break;
-    }
-
-    const n = BigInt(str);
-    return sign === '-' ? BigInt(-1) * n : n;
-  }
-
-  const n = parseInt(str, radix);
-  return sign === '-' ? -1 * n : n;
-}
-
-function intStringify$1(node, radix, prefix) {
-  const {
-    value
-  } = node;
-
-  if (intIdentify$2(value)) {
-    const str = value.toString(radix);
-    return value < 0 ? '-' + prefix + str.substr(1) : prefix + str;
-  }
-
-  return resolveSeq.stringifyNumber(node);
-}
-
-const yaml11 = failsafe.concat([{
-  identify: value => value == null,
-  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
-  default: true,
-  tag: 'tag:yaml.org,2002:null',
-  test: /^(?:~|[Nn]ull|NULL)?$/,
-  resolve: () => null,
-  options: resolveSeq.nullOptions,
-  stringify: () => resolveSeq.nullOptions.nullStr
-}, {
-  identify: value => typeof value === 'boolean',
-  default: true,
-  tag: 'tag:yaml.org,2002:bool',
-  test: /^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/,
-  resolve: () => true,
-  options: resolveSeq.boolOptions,
-  stringify: boolStringify
-}, {
-  identify: value => typeof value === 'boolean',
-  default: true,
-  tag: 'tag:yaml.org,2002:bool',
-  test: /^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/i,
-  resolve: () => false,
-  options: resolveSeq.boolOptions,
-  stringify: boolStringify
-}, {
-  identify: intIdentify$2,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'BIN',
-  test: /^([-+]?)0b([0-1_]+)$/,
-  resolve: (str, sign, bin) => intResolve$1(sign, bin, 2),
-  stringify: node => intStringify$1(node, 2, '0b')
-}, {
-  identify: intIdentify$2,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'OCT',
-  test: /^([-+]?)0([0-7_]+)$/,
-  resolve: (str, sign, oct) => intResolve$1(sign, oct, 8),
-  stringify: node => intStringify$1(node, 8, '0')
-}, {
-  identify: intIdentify$2,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  test: /^([-+]?)([0-9][0-9_]*)$/,
-  resolve: (str, sign, abs) => intResolve$1(sign, abs, 10),
-  stringify: resolveSeq.stringifyNumber
-}, {
-  identify: intIdentify$2,
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'HEX',
-  test: /^([-+]?)0x([0-9a-fA-F_]+)$/,
-  resolve: (str, sign, hex) => intResolve$1(sign, hex, 16),
-  stringify: node => intStringify$1(node, 16, '0x')
-}, {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  test: /^(?:[-+]?\.inf|(\.nan))$/i,
-  resolve: (str, nan) => nan ? NaN : str[0] === '-' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
-  stringify: resolveSeq.stringifyNumber
-}, {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  format: 'EXP',
-  test: /^[-+]?([0-9][0-9_]*)?(\.[0-9_]*)?[eE][-+]?[0-9]+$/,
-  resolve: str => parseFloat(str.replace(/_/g, '')),
-  stringify: ({
-    value
-  }) => Number(value).toExponential()
-}, {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  test: /^[-+]?(?:[0-9][0-9_]*)?\.([0-9_]*)$/,
-
-  resolve(str, frac) {
-    const node = new resolveSeq.Scalar(parseFloat(str.replace(/_/g, '')));
-
-    if (frac) {
-      const f = frac.replace(/_/g, '');
-      if (f[f.length - 1] === '0') node.minFractionDigits = f.length;
-    }
-
-    return node;
-  },
-
-  stringify: resolveSeq.stringifyNumber
-}], warnings.binary, warnings.omap, warnings.pairs, warnings.set, warnings.intTime, warnings.floatTime, warnings.timestamp);
-
-const schemas = {
-  core,
-  failsafe,
-  json,
-  yaml11
-};
-const tags = {
-  binary: warnings.binary,
-  bool: boolObj,
-  float: floatObj,
-  floatExp: expObj,
-  floatNaN: nanObj,
-  floatTime: warnings.floatTime,
-  int: intObj,
-  intHex: hexObj,
-  intOct: octObj,
-  intTime: warnings.intTime,
-  map,
-  null: nullObj,
-  omap: warnings.omap,
-  pairs: warnings.pairs,
-  seq,
-  set: warnings.set,
-  timestamp: warnings.timestamp
-};
-
-function findTagObject(value, tagName, tags) {
-  if (tagName) {
-    const match = tags.filter(t => t.tag === tagName);
-    const tagObj = match.find(t => !t.format) || match[0];
-    if (!tagObj) throw new Error(`Tag ${tagName} not found`);
-    return tagObj;
-  } // TODO: deprecate/remove class check
-
-
-  return tags.find(t => (t.identify && t.identify(value) || t.class && value instanceof t.class) && !t.format);
-}
-
-function createNode(value, tagName, ctx) {
-  if (value instanceof resolveSeq.Node) return value;
-  const {
-    defaultPrefix,
-    onTagObj,
-    prevObjects,
-    schema,
-    wrapScalars
-  } = ctx;
-  if (tagName && tagName.startsWith('!!')) tagName = defaultPrefix + tagName.slice(2);
-  let tagObj = findTagObject(value, tagName, schema.tags);
-
-  if (!tagObj) {
-    if (typeof value.toJSON === 'function') value = value.toJSON();
-    if (typeof value !== 'object') return wrapScalars ? new resolveSeq.Scalar(value) : value;
-    tagObj = value instanceof Map ? map : value[Symbol.iterator] ? seq : map;
-  }
-
-  if (onTagObj) {
-    onTagObj(tagObj);
-    delete ctx.onTagObj;
-  } // Detect duplicate references to the same object & use Alias nodes for all
-  // after first. The `obj` wrapper allows for circular references to resolve.
-
-
-  const obj = {};
-
-  if (value && typeof value === 'object' && prevObjects) {
-    const prev = prevObjects.get(value);
-
-    if (prev) {
-      const alias = new resolveSeq.Alias(prev); // leaves source dirty; must be cleaned by caller
-
-      ctx.aliasNodes.push(alias); // defined along with prevObjects
-
-      return alias;
-    }
-
-    obj.value = value;
-    prevObjects.set(value, obj);
-  }
-
-  obj.node = tagObj.createNode ? tagObj.createNode(ctx.schema, value, ctx) : wrapScalars ? new resolveSeq.Scalar(value) : value;
-  if (tagName && obj.node instanceof resolveSeq.Node) obj.node.tag = tagName;
-  return obj.node;
-}
-
-function getSchemaTags(schemas, knownTags, customTags, schemaId) {
-  let tags = schemas[schemaId.replace(/\W/g, '')]; // 'yaml-1.1' -> 'yaml11'
-
-  if (!tags) {
-    const keys = Object.keys(schemas).map(key => JSON.stringify(key)).join(', ');
-    throw new Error(`Unknown schema "${schemaId}"; use one of ${keys}`);
-  }
-
-  if (Array.isArray(customTags)) {
-    for (const tag of customTags) tags = tags.concat(tag);
-  } else if (typeof customTags === 'function') {
-    tags = customTags(tags.slice());
-  }
-
-  for (let i = 0; i < tags.length; ++i) {
-    const tag = tags[i];
-
-    if (typeof tag === 'string') {
-      const tagObj = knownTags[tag];
-
-      if (!tagObj) {
-        const keys = Object.keys(knownTags).map(key => JSON.stringify(key)).join(', ');
-        throw new Error(`Unknown custom tag "${tag}"; use one of ${keys}`);
-      }
-
-      tags[i] = tagObj;
-    }
-  }
-
-  return tags;
-}
-
-const sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-
-class Schema {
-  // TODO: remove in v2
-  // TODO: remove in v2
-  constructor({
-    customTags,
-    merge,
-    schema,
-    sortMapEntries,
-    tags: deprecatedCustomTags
-  }) {
-    this.merge = !!merge;
-    this.name = schema;
-    this.sortMapEntries = sortMapEntries === true ? sortMapEntriesByKey : sortMapEntries || null;
-    if (!customTags && deprecatedCustomTags) warnings.warnOptionDeprecation('tags', 'customTags');
-    this.tags = getSchemaTags(schemas, tags, customTags || deprecatedCustomTags, schema);
-  }
-
-  createNode(value, wrapScalars, tagName, ctx) {
-    const baseCtx = {
-      defaultPrefix: Schema.defaultPrefix,
-      schema: this,
-      wrapScalars
-    };
-    const createCtx = ctx ? Object.assign(ctx, baseCtx) : baseCtx;
-    return createNode(value, tagName, createCtx);
-  }
-
-  createPair(key, value, ctx) {
-    if (!ctx) ctx = {
-      wrapScalars: true
-    };
-    const k = this.createNode(key, ctx.wrapScalars, null, ctx);
-    const v = this.createNode(value, ctx.wrapScalars, null, ctx);
-    return new resolveSeq.Pair(k, v);
-  }
-
-}
-
-PlainValue._defineProperty(Schema, "defaultPrefix", PlainValue.defaultTagPrefix);
-
-PlainValue._defineProperty(Schema, "defaultTags", PlainValue.defaultTags);
-
-exports.Schema = Schema;
-
-
-/***/ }),
+/* 421 */,
 /* 422 */,
 /* 423 */,
 /* 424 */,
 /* 425 */,
-/* 426 */,
+/* 426 */
+/***/ (function(module) {
+
+"use strict";
+
+const SPACES_REGEXP = / +/g;
+
+const joinCommand = (file, args = []) => {
+	if (!Array.isArray(args)) {
+		return file;
+	}
+
+	return [file, ...args].join(' ');
+};
+
+// Handle `execa.command()`
+const parseCommand = command => {
+	const tokens = [];
+	for (const token of command.trim().split(SPACES_REGEXP)) {
+		// Allow spaces to be escaped by a backslash if not meant as a delimiter
+		const previousToken = tokens[tokens.length - 1];
+		if (previousToken && previousToken.endsWith('\\')) {
+			// Merge previous token with current one
+			tokens[tokens.length - 1] = `${previousToken.slice(0, -1)} ${token}`;
+		} else {
+			tokens.push(token);
+		}
+	}
+
+	return tokens;
+};
+
+module.exports = {
+	joinCommand,
+	parseCommand
+};
+
+
+/***/ }),
 /* 427 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -31891,11 +31057,17 @@ const pEachSeries = async (iterable, iterator) => {
 
 	for (const value of iterable) {
 		// eslint-disable-next-line no-await-in-loop
-		await iterator(await value, index++);
+		const returnValue = await iterator(await value, index++);
+
+		if (returnValue === pEachSeries.stop) {
+			break;
+		}
 	}
 
 	return iterable;
 };
+
+pEachSeries.stop = Symbol('pEachSeries.stop');
 
 module.exports = pEachSeries;
 // TODO: Remove this for the next major release
@@ -31918,6 +31090,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const os = __importStar(__webpack_require__(87));
+const utils_1 = __webpack_require__(82);
 /**
  * Commands
  *
@@ -31971,28 +31144,14 @@ class Command {
         return cmdStr;
     }
 }
-/**
- * Sanitizes an input into a string so it can be passed into issueCommand safely
- * @param input input to sanitize into a string
- */
-function toCommandValue(input) {
-    if (input === null || input === undefined) {
-        return '';
-    }
-    else if (typeof input === 'string' || input instanceof String) {
-        return input;
-    }
-    return JSON.stringify(input);
-}
-exports.toCommandValue = toCommandValue;
 function escapeData(s) {
-    return toCommandValue(s)
+    return utils_1.toCommandValue(s)
         .replace(/%/g, '%25')
         .replace(/\r/g, '%0D')
         .replace(/\n/g, '%0A');
 }
 function escapeProperty(s) {
-    return toCommandValue(s)
+    return utils_1.toCommandValue(s)
         .replace(/%/g, '%25')
         .replace(/\r/g, '%0D')
         .replace(/\n/g, '%0A')
@@ -32006,50 +31165,302 @@ function escapeProperty(s) {
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-const {promisify} = __webpack_require__(669);
-const fs = __webpack_require__(747);
 
-async function isType(fsStatType, statsMethodName, filePath) {
-	if (typeof filePath !== 'string') {
-		throw new TypeError(`Expected a string, got ${typeof filePath}`);
-	}
 
-	try {
-		const stats = await promisify(fs[fsStatType])(filePath);
-		return stats[statsMethodName]();
-	} catch (error) {
-		if (error.code === 'ENOENT') {
-			return false;
-		}
+/*<replacement>*/
 
-		throw error;
-	}
+var Buffer = __webpack_require__(149).Buffer;
+/*</replacement>*/
+
+var isEncoding = Buffer.isEncoding || function (encoding) {
+  encoding = '' + encoding;
+  switch (encoding && encoding.toLowerCase()) {
+    case 'hex':case 'utf8':case 'utf-8':case 'ascii':case 'binary':case 'base64':case 'ucs2':case 'ucs-2':case 'utf16le':case 'utf-16le':case 'raw':
+      return true;
+    default:
+      return false;
+  }
+};
+
+function _normalizeEncoding(enc) {
+  if (!enc) return 'utf8';
+  var retried;
+  while (true) {
+    switch (enc) {
+      case 'utf8':
+      case 'utf-8':
+        return 'utf8';
+      case 'ucs2':
+      case 'ucs-2':
+      case 'utf16le':
+      case 'utf-16le':
+        return 'utf16le';
+      case 'latin1':
+      case 'binary':
+        return 'latin1';
+      case 'base64':
+      case 'ascii':
+      case 'hex':
+        return enc;
+      default:
+        if (retried) return; // undefined
+        enc = ('' + enc).toLowerCase();
+        retried = true;
+    }
+  }
+};
+
+// Do not cache `Buffer.isEncoding` when checking encoding names as some
+// modules monkey-patch it to support additional encodings
+function normalizeEncoding(enc) {
+  var nenc = _normalizeEncoding(enc);
+  if (typeof nenc !== 'string' && (Buffer.isEncoding === isEncoding || !isEncoding(enc))) throw new Error('Unknown encoding: ' + enc);
+  return nenc || enc;
 }
 
-function isTypeSync(fsStatType, statsMethodName, filePath) {
-	if (typeof filePath !== 'string') {
-		throw new TypeError(`Expected a string, got ${typeof filePath}`);
-	}
-
-	try {
-		return fs[fsStatType](filePath)[statsMethodName]();
-	} catch (error) {
-		if (error.code === 'ENOENT') {
-			return false;
-		}
-
-		throw error;
-	}
+// StringDecoder provides an interface for efficiently splitting a series of
+// buffers into a series of JS strings without breaking apart multi-byte
+// characters.
+exports.StringDecoder = StringDecoder;
+function StringDecoder(encoding) {
+  this.encoding = normalizeEncoding(encoding);
+  var nb;
+  switch (this.encoding) {
+    case 'utf16le':
+      this.text = utf16Text;
+      this.end = utf16End;
+      nb = 4;
+      break;
+    case 'utf8':
+      this.fillLast = utf8FillLast;
+      nb = 4;
+      break;
+    case 'base64':
+      this.text = base64Text;
+      this.end = base64End;
+      nb = 3;
+      break;
+    default:
+      this.write = simpleWrite;
+      this.end = simpleEnd;
+      return;
+  }
+  this.lastNeed = 0;
+  this.lastTotal = 0;
+  this.lastChar = Buffer.allocUnsafe(nb);
 }
 
-exports.isFile = isType.bind(null, 'stat', 'isFile');
-exports.isDirectory = isType.bind(null, 'stat', 'isDirectory');
-exports.isSymlink = isType.bind(null, 'lstat', 'isSymbolicLink');
-exports.isFileSync = isTypeSync.bind(null, 'statSync', 'isFile');
-exports.isDirectorySync = isTypeSync.bind(null, 'statSync', 'isDirectory');
-exports.isSymlinkSync = isTypeSync.bind(null, 'lstatSync', 'isSymbolicLink');
+StringDecoder.prototype.write = function (buf) {
+  if (buf.length === 0) return '';
+  var r;
+  var i;
+  if (this.lastNeed) {
+    r = this.fillLast(buf);
+    if (r === undefined) return '';
+    i = this.lastNeed;
+    this.lastNeed = 0;
+  } else {
+    i = 0;
+  }
+  if (i < buf.length) return r ? r + this.text(buf, i) : this.text(buf, i);
+  return r || '';
+};
 
+StringDecoder.prototype.end = utf8End;
+
+// Returns only complete characters in a Buffer
+StringDecoder.prototype.text = utf8Text;
+
+// Attempts to complete a partial non-UTF-8 character using bytes from a Buffer
+StringDecoder.prototype.fillLast = function (buf) {
+  if (this.lastNeed <= buf.length) {
+    buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, this.lastNeed);
+    return this.lastChar.toString(this.encoding, 0, this.lastTotal);
+  }
+  buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, buf.length);
+  this.lastNeed -= buf.length;
+};
+
+// Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
+// continuation byte. If an invalid byte is detected, -2 is returned.
+function utf8CheckByte(byte) {
+  if (byte <= 0x7F) return 0;else if (byte >> 5 === 0x06) return 2;else if (byte >> 4 === 0x0E) return 3;else if (byte >> 3 === 0x1E) return 4;
+  return byte >> 6 === 0x02 ? -1 : -2;
+}
+
+// Checks at most 3 bytes at the end of a Buffer in order to detect an
+// incomplete multi-byte UTF-8 character. The total number of bytes (2, 3, or 4)
+// needed to complete the UTF-8 character (if applicable) are returned.
+function utf8CheckIncomplete(self, buf, i) {
+  var j = buf.length - 1;
+  if (j < i) return 0;
+  var nb = utf8CheckByte(buf[j]);
+  if (nb >= 0) {
+    if (nb > 0) self.lastNeed = nb - 1;
+    return nb;
+  }
+  if (--j < i || nb === -2) return 0;
+  nb = utf8CheckByte(buf[j]);
+  if (nb >= 0) {
+    if (nb > 0) self.lastNeed = nb - 2;
+    return nb;
+  }
+  if (--j < i || nb === -2) return 0;
+  nb = utf8CheckByte(buf[j]);
+  if (nb >= 0) {
+    if (nb > 0) {
+      if (nb === 2) nb = 0;else self.lastNeed = nb - 3;
+    }
+    return nb;
+  }
+  return 0;
+}
+
+// Validates as many continuation bytes for a multi-byte UTF-8 character as
+// needed or are available. If we see a non-continuation byte where we expect
+// one, we "replace" the validated continuation bytes we've seen so far with
+// a single UTF-8 replacement character ('\ufffd'), to match v8's UTF-8 decoding
+// behavior. The continuation byte check is included three times in the case
+// where all of the continuation bytes for a character exist in the same buffer.
+// It is also done this way as a slight performance increase instead of using a
+// loop.
+function utf8CheckExtraBytes(self, buf, p) {
+  if ((buf[0] & 0xC0) !== 0x80) {
+    self.lastNeed = 0;
+    return '\ufffd';
+  }
+  if (self.lastNeed > 1 && buf.length > 1) {
+    if ((buf[1] & 0xC0) !== 0x80) {
+      self.lastNeed = 1;
+      return '\ufffd';
+    }
+    if (self.lastNeed > 2 && buf.length > 2) {
+      if ((buf[2] & 0xC0) !== 0x80) {
+        self.lastNeed = 2;
+        return '\ufffd';
+      }
+    }
+  }
+}
+
+// Attempts to complete a multi-byte UTF-8 character using bytes from a Buffer.
+function utf8FillLast(buf) {
+  var p = this.lastTotal - this.lastNeed;
+  var r = utf8CheckExtraBytes(this, buf, p);
+  if (r !== undefined) return r;
+  if (this.lastNeed <= buf.length) {
+    buf.copy(this.lastChar, p, 0, this.lastNeed);
+    return this.lastChar.toString(this.encoding, 0, this.lastTotal);
+  }
+  buf.copy(this.lastChar, p, 0, buf.length);
+  this.lastNeed -= buf.length;
+}
+
+// Returns all complete UTF-8 characters in a Buffer. If the Buffer ended on a
+// partial character, the character's bytes are buffered until the required
+// number of bytes are available.
+function utf8Text(buf, i) {
+  var total = utf8CheckIncomplete(this, buf, i);
+  if (!this.lastNeed) return buf.toString('utf8', i);
+  this.lastTotal = total;
+  var end = buf.length - (total - this.lastNeed);
+  buf.copy(this.lastChar, 0, end);
+  return buf.toString('utf8', i, end);
+}
+
+// For UTF-8, a replacement character is added when ending on a partial
+// character.
+function utf8End(buf) {
+  var r = buf && buf.length ? this.write(buf) : '';
+  if (this.lastNeed) return r + '\ufffd';
+  return r;
+}
+
+// UTF-16LE typically needs two bytes per character, but even if we have an even
+// number of bytes available, we need to check if we end on a leading/high
+// surrogate. In that case, we need to wait for the next two bytes in order to
+// decode the last character properly.
+function utf16Text(buf, i) {
+  if ((buf.length - i) % 2 === 0) {
+    var r = buf.toString('utf16le', i);
+    if (r) {
+      var c = r.charCodeAt(r.length - 1);
+      if (c >= 0xD800 && c <= 0xDBFF) {
+        this.lastNeed = 2;
+        this.lastTotal = 4;
+        this.lastChar[0] = buf[buf.length - 2];
+        this.lastChar[1] = buf[buf.length - 1];
+        return r.slice(0, -1);
+      }
+    }
+    return r;
+  }
+  this.lastNeed = 1;
+  this.lastTotal = 2;
+  this.lastChar[0] = buf[buf.length - 1];
+  return buf.toString('utf16le', i, buf.length - 1);
+}
+
+// For UTF-16LE we do not explicitly append special replacement characters if we
+// end on a partial character, we simply let v8 handle that.
+function utf16End(buf) {
+  var r = buf && buf.length ? this.write(buf) : '';
+  if (this.lastNeed) {
+    var end = this.lastTotal - this.lastNeed;
+    return r + this.lastChar.toString('utf16le', 0, end);
+  }
+  return r;
+}
+
+function base64Text(buf, i) {
+  var n = (buf.length - i) % 3;
+  if (n === 0) return buf.toString('base64', i);
+  this.lastNeed = 3 - n;
+  this.lastTotal = 3;
+  if (n === 1) {
+    this.lastChar[0] = buf[buf.length - 1];
+  } else {
+    this.lastChar[0] = buf[buf.length - 2];
+    this.lastChar[1] = buf[buf.length - 1];
+  }
+  return buf.toString('base64', i, buf.length - n);
+}
+
+function base64End(buf) {
+  var r = buf && buf.length ? this.write(buf) : '';
+  if (this.lastNeed) return r + this.lastChar.toString('base64', 0, 3 - this.lastNeed);
+  return r;
+}
+
+// Pass bytes on through for single-byte encodings (e.g. ascii, latin1, hex)
+function simpleWrite(buf) {
+  return buf.toString(this.encoding);
+}
+
+function simpleEnd(buf) {
+  return buf && buf.length ? this.write(buf) : '';
+}
 
 /***/ }),
 /* 433 */,
@@ -32244,7 +31655,65 @@ module.exports = expand;
 
 /***/ }),
 /* 442 */,
-/* 443 */,
+/* 443 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const {PassThrough: PassThroughStream} = __webpack_require__(794);
+
+module.exports = options => {
+	options = {...options};
+
+	const {array} = options;
+	let {encoding} = options;
+	const isBuffer = encoding === 'buffer';
+	let objectMode = false;
+
+	if (array) {
+		objectMode = !(encoding || isBuffer);
+	} else {
+		encoding = encoding || 'utf8';
+	}
+
+	if (isBuffer) {
+		encoding = null;
+	}
+
+	const stream = new PassThroughStream({objectMode});
+
+	if (encoding) {
+		stream.setEncoding(encoding);
+	}
+
+	let length = 0;
+	const chunks = [];
+
+	stream.on('data', chunk => {
+		chunks.push(chunk);
+
+		if (objectMode) {
+			length = chunks.length;
+		} else {
+			length += chunk.length;
+		}
+	});
+
+	stream.getBufferedValue = () => {
+		if (array) {
+			return chunks;
+		}
+
+		return isBuffer ? Buffer.concat(chunks, length) : chunks.join('');
+	};
+
+	stream.getBufferedLength = () => length;
+
+	return stream;
+};
+
+
+/***/ }),
 /* 444 */
 /***/ (function(module) {
 
@@ -32458,9 +31927,80 @@ module.exports = {
 
 /***/ }),
 /* 447 */
-/***/ (function(module) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
-module.exports = {"topLevel":{"dependancies":"dependencies","dependecies":"dependencies","depdenencies":"dependencies","devEependencies":"devDependencies","depends":"dependencies","dev-dependencies":"devDependencies","devDependences":"devDependencies","devDepenencies":"devDependencies","devdependencies":"devDependencies","repostitory":"repository","repo":"repository","prefereGlobal":"preferGlobal","hompage":"homepage","hampage":"homepage","autohr":"author","autor":"author","contributers":"contributors","publicationConfig":"publishConfig","script":"scripts"},"bugs":{"web":"url","name":"url"},"script":{"server":"start","tests":"test"}};
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.signalsByNumber=exports.signalsByName=void 0;var _os=__webpack_require__(87);
+
+var _signals=__webpack_require__(673);
+var _realtime=__webpack_require__(945);
+
+
+
+const getSignalsByName=function(){
+const signals=(0,_signals.getSignals)();
+return signals.reduce(getSignalByName,{});
+};
+
+const getSignalByName=function(
+signalByNameMemo,
+{name,number,description,supported,action,forced,standard})
+{
+return{
+...signalByNameMemo,
+[name]:{name,number,description,supported,action,forced,standard}};
+
+};
+
+const signalsByName=getSignalsByName();exports.signalsByName=signalsByName;
+
+
+
+
+const getSignalsByNumber=function(){
+const signals=(0,_signals.getSignals)();
+const length=_realtime.SIGRTMAX+1;
+const signalsA=Array.from({length},(value,number)=>
+getSignalByNumber(number,signals));
+
+return Object.assign({},...signalsA);
+};
+
+const getSignalByNumber=function(number,signals){
+const signal=findSignalByNumber(number,signals);
+
+if(signal===undefined){
+return{};
+}
+
+const{name,description,supported,action,forced,standard}=signal;
+return{
+[number]:{
+name,
+number,
+description,
+supported,
+action,
+forced,
+standard}};
+
+
+};
+
+
+
+const findSignalByNumber=function(number,signals){
+const signal=signals.find(({name})=>_os.constants.signals[name]===number);
+
+if(signal!==undefined){
+return signal;
+}
+
+return signals.find(signalA=>signalA.number===number);
+};
+
+const signalsByNumber=getSignalsByNumber();exports.signalsByNumber=signalsByNumber;
+//# sourceMappingURL=main.js.map
 
 /***/ }),
 /* 448 */
@@ -32477,56 +32017,43 @@ var request = __webpack_require__(753);
 var graphql = __webpack_require__(898);
 var authToken = __webpack_require__(813);
 
-function _defineProperty(obj, key, value) {
-  if (key in obj) {
-    Object.defineProperty(obj, key, {
-      value: value,
-      enumerable: true,
-      configurable: true,
-      writable: true
-    });
-  } else {
-    obj[key] = value;
+function _objectWithoutPropertiesLoose(source, excluded) {
+  if (source == null) return {};
+  var target = {};
+  var sourceKeys = Object.keys(source);
+  var key, i;
+
+  for (i = 0; i < sourceKeys.length; i++) {
+    key = sourceKeys[i];
+    if (excluded.indexOf(key) >= 0) continue;
+    target[key] = source[key];
   }
 
-  return obj;
+  return target;
 }
 
-function ownKeys(object, enumerableOnly) {
-  var keys = Object.keys(object);
+function _objectWithoutProperties(source, excluded) {
+  if (source == null) return {};
+
+  var target = _objectWithoutPropertiesLoose(source, excluded);
+
+  var key, i;
 
   if (Object.getOwnPropertySymbols) {
-    var symbols = Object.getOwnPropertySymbols(object);
-    if (enumerableOnly) symbols = symbols.filter(function (sym) {
-      return Object.getOwnPropertyDescriptor(object, sym).enumerable;
-    });
-    keys.push.apply(keys, symbols);
-  }
+    var sourceSymbolKeys = Object.getOwnPropertySymbols(source);
 
-  return keys;
-}
-
-function _objectSpread2(target) {
-  for (var i = 1; i < arguments.length; i++) {
-    var source = arguments[i] != null ? arguments[i] : {};
-
-    if (i % 2) {
-      ownKeys(Object(source), true).forEach(function (key) {
-        _defineProperty(target, key, source[key]);
-      });
-    } else if (Object.getOwnPropertyDescriptors) {
-      Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
-    } else {
-      ownKeys(Object(source)).forEach(function (key) {
-        Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
-      });
+    for (i = 0; i < sourceSymbolKeys.length; i++) {
+      key = sourceSymbolKeys[i];
+      if (excluded.indexOf(key) >= 0) continue;
+      if (!Object.prototype.propertyIsEnumerable.call(source, key)) continue;
+      target[key] = source[key];
     }
   }
 
   return target;
 }
 
-const VERSION = "3.1.1";
+const VERSION = "3.4.0";
 
 class Octokit {
   constructor(options = {}) {
@@ -32535,6 +32062,7 @@ class Octokit {
       baseUrl: request.request.endpoint.DEFAULTS.baseUrl,
       headers: {},
       request: Object.assign({}, options.request, {
+        // @ts-ignore internal usage only, no need to type
         hook: hook.bind(null, "request")
       }),
       mediaType: {
@@ -32558,9 +32086,7 @@ class Octokit {
     }
 
     this.request = request.request.defaults(requestDefaults);
-    this.graphql = graphql.withCustomRequest(this.request).defaults(_objectSpread2(_objectSpread2({}, requestDefaults), {}, {
-      baseUrl: requestDefaults.baseUrl.replace(/\/api\/v3$/, "/api")
-    }));
+    this.graphql = graphql.withCustomRequest(this.request).defaults(requestDefaults);
     this.log = Object.assign({
       debug: () => {},
       info: () => {},
@@ -32568,7 +32094,7 @@ class Octokit {
       error: console.error.bind(console)
     }, options.log);
     this.hook = hook; // (1) If neither `options.authStrategy` nor `options.auth` are set, the `octokit` instance
-    //     is unauthenticated. The `this.auth()` method is a no-op and no request hook is registred.
+    //     is unauthenticated. The `this.auth()` method is a no-op and no request hook is registered.
     // (2) If only `options.auth` is set, use the default token authentication strategy.
     // (3) If `options.authStrategy` is set then use it and pass in `options.auth`. Always pass own request as many strategies accept a custom request instance.
     // TODO: type `options.auth` based on `options.authStrategy`.
@@ -32587,8 +32113,21 @@ class Octokit {
         this.auth = auth;
       }
     } else {
-      const auth = options.authStrategy(Object.assign({
-        request: this.request
+      const {
+        authStrategy
+      } = options,
+            otherOptions = _objectWithoutProperties(options, ["authStrategy"]);
+
+      const auth = authStrategy(Object.assign({
+        request: this.request,
+        log: this.log,
+        // we pass the current octokit instance as well as its constructor options
+        // to allow for authentication strategies that return a new octokit instance
+        // that shares the same internal state as the current one. The original
+        // requirement for this was the "event-octokit" authentication strategy
+        // of https://github.com/probot/octokit-auth-probot.
+        octokit: this,
+        octokitOptions: otherOptions
       }, options.auth)); // @ts-ignore  ¯\_(ツ)_/¯
 
       hook.wrap("request", auth.hook);
@@ -33234,6 +32773,12 @@ function convertBody(buffer, headers) {
 	// html4
 	if (!res && str) {
 		res = /<meta[\s]+?http-equiv=(['"])content-type\1[\s]+?content=(['"])(.+?)\2/i.exec(str);
+		if (!res) {
+			res = /<meta[\s]+?content=(['"])(.+?)\1[\s]+?http-equiv=(['"])content-type\3/i.exec(str);
+			if (res) {
+				res.pop(); // drop last quote
+			}
+		}
 
 		if (res) {
 			res = /charset=(.*)/i.exec(res.pop());
@@ -34241,7 +33786,7 @@ function fetch(url, opts) {
 				// HTTP fetch step 5.5
 				switch (request.redirect) {
 					case 'error':
-						reject(new FetchError(`redirect mode is set to error: ${request.url}`, 'no-redirect'));
+						reject(new FetchError(`uri requested responds with a redirect, redirect mode is set to error: ${request.url}`, 'no-redirect'));
 						finalize();
 						return;
 					case 'manual':
@@ -34280,7 +33825,8 @@ function fetch(url, opts) {
 							method: request.method,
 							body: request.body,
 							signal: request.signal,
-							timeout: request.timeout
+							timeout: request.timeout,
+							size: request.size
 						};
 
 						// HTTP-redirect fetch step 9
@@ -34467,25 +34013,66 @@ module.exports = function nodeModulesPaths(start, opts, request) {
 "use strict";
 
 const path = __webpack_require__(622);
-const pathExists = __webpack_require__(294);
+const fs = __webpack_require__(747);
+const {promisify} = __webpack_require__(669);
 const pLocate = __webpack_require__(767);
 
-module.exports = (iterable, opts) => {
-	opts = Object.assign({
-		cwd: process.cwd()
-	}, opts);
+const fsStat = promisify(fs.stat);
+const fsLStat = promisify(fs.lstat);
 
-	return pLocate(iterable, el => pathExists(path.resolve(opts.cwd, el)), opts);
+const typeMappings = {
+	directory: 'isDirectory',
+	file: 'isFile'
 };
 
-module.exports.sync = (iterable, opts) => {
-	opts = Object.assign({
-		cwd: process.cwd()
-	}, opts);
+function checkType({type}) {
+	if (type in typeMappings) {
+		return;
+	}
 
-	for (const el of iterable) {
-		if (pathExists.sync(path.resolve(opts.cwd, el))) {
-			return el;
+	throw new Error(`Invalid type specified: ${type}`);
+}
+
+const matchType = (type, stat) => type === undefined || stat[typeMappings[type]]();
+
+module.exports = async (paths, options) => {
+	options = {
+		cwd: process.cwd(),
+		type: 'file',
+		allowSymlinks: true,
+		...options
+	};
+	checkType(options);
+	const statFn = options.allowSymlinks ? fsStat : fsLStat;
+
+	return pLocate(paths, async path_ => {
+		try {
+			const stat = await statFn(path.resolve(options.cwd, path_));
+			return matchType(options.type, stat);
+		} catch (_) {
+			return false;
+		}
+	}, options);
+};
+
+module.exports.sync = (paths, options) => {
+	options = {
+		cwd: process.cwd(),
+		allowSymlinks: true,
+		type: 'file',
+		...options
+	};
+	checkType(options);
+	const statFn = options.allowSymlinks ? fs.statSync : fs.lstatSync;
+
+	for (const path_ of paths) {
+		try {
+			const stat = statFn(path.resolve(options.cwd, path_));
+
+			if (matchType(options.type, stat)) {
+				return path_;
+			}
+		} catch (_) {
 		}
 	}
 };
@@ -35220,6 +34807,8 @@ var __importStar = (this && this.__importStar) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const command_1 = __webpack_require__(431);
+const file_command_1 = __webpack_require__(102);
+const utils_1 = __webpack_require__(82);
 const os = __importStar(__webpack_require__(87));
 const path = __importStar(__webpack_require__(622));
 /**
@@ -35246,9 +34835,17 @@ var ExitCode;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function exportVariable(name, val) {
-    const convertedVal = command_1.toCommandValue(val);
+    const convertedVal = utils_1.toCommandValue(val);
     process.env[name] = convertedVal;
-    command_1.issueCommand('set-env', { name }, convertedVal);
+    const filePath = process.env['GITHUB_ENV'] || '';
+    if (filePath) {
+        const delimiter = '_GitHubActionsFileCommandDelimeter_';
+        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
+        file_command_1.issueCommand('ENV', commandValue);
+    }
+    else {
+        command_1.issueCommand('set-env', { name }, convertedVal);
+    }
 }
 exports.exportVariable = exportVariable;
 /**
@@ -35264,7 +34861,13 @@ exports.setSecret = setSecret;
  * @param inputPath
  */
 function addPath(inputPath) {
-    command_1.issueCommand('add-path', {}, inputPath);
+    const filePath = process.env['GITHUB_PATH'] || '';
+    if (filePath) {
+        file_command_1.issueCommand('PATH', inputPath);
+    }
+    else {
+        command_1.issueCommand('add-path', {}, inputPath);
+    }
     process.env['PATH'] = `${inputPath}${path.delimiter}${process.env['PATH']}`;
 }
 exports.addPath = addPath;
@@ -35291,6 +34894,7 @@ exports.getInput = getInput;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
+    process.stdout.write(os.EOL);
     command_1.issueCommand('set-output', { name }, value);
 }
 exports.setOutput = setOutput;
@@ -35440,7 +35044,7 @@ exports.defaultLoaders = void 0;
 
 var _os = _interopRequireDefault(__webpack_require__(87));
 
-var _Explorer = __webpack_require__(341);
+var _Explorer = __webpack_require__(982);
 
 var _ExplorerSync = __webpack_require__(38);
 
@@ -35450,6 +35054,7 @@ var _types = __webpack_require__(490);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
+/* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function cosmiconfig(moduleName, options = {}) {
   const normalizedOptions = normalizeOptions(moduleName, options);
@@ -35478,6 +35083,7 @@ function cosmiconfigSync(moduleName, options = {}) {
 
 
 const defaultLoaders = Object.freeze({
+  '.cjs': _loaders.loaders.loadJs,
   '.js': _loaders.loaders.loadJs,
   '.json': _loaders.loaders.loadJson,
   '.yaml': _loaders.loaders.loadYaml,
@@ -35486,10 +35092,14 @@ const defaultLoaders = Object.freeze({
 });
 exports.defaultLoaders = defaultLoaders;
 
+const identity = function identity(x) {
+  return x;
+};
+
 function normalizeOptions(moduleName, options) {
   const defaults = {
     packageProp: moduleName,
-    searchPlaces: ['package.json', `.${moduleName}rc`, `.${moduleName}rc.json`, `.${moduleName}rc.yaml`, `.${moduleName}rc.yml`, `.${moduleName}rc.js`, `${moduleName}.config.js`],
+    searchPlaces: ['package.json', `.${moduleName}rc`, `.${moduleName}rc.json`, `.${moduleName}rc.yaml`, `.${moduleName}rc.yml`, `.${moduleName}rc.js`, `.${moduleName}rc.cjs`, `${moduleName}.config.js`, `${moduleName}.config.cjs`],
     ignoreEmptySearchPlaces: true,
     stopDir: _os.default.homedir(),
     cache: true,
@@ -35504,10 +35114,6 @@ function normalizeOptions(moduleName, options) {
   };
   return normalizedOptions;
 }
-
-const identity = function identity(x) {
-  return x;
-};
 //# sourceMappingURL=index.js.map
 
 /***/ }),
@@ -35654,7 +35260,538 @@ module.exports = (function () {
 })();
 
 /***/ }),
-/* 481 */,
+/* 481 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+
+var PlainValue = __webpack_require__(513);
+var resolveSeq = __webpack_require__(329);
+var warnings = __webpack_require__(287);
+
+function createMap(schema, obj, ctx) {
+  const map = new resolveSeq.YAMLMap(schema);
+
+  if (obj instanceof Map) {
+    for (const [key, value] of obj) map.items.push(schema.createPair(key, value, ctx));
+  } else if (obj && typeof obj === 'object') {
+    for (const key of Object.keys(obj)) map.items.push(schema.createPair(key, obj[key], ctx));
+  }
+
+  if (typeof schema.sortMapEntries === 'function') {
+    map.items.sort(schema.sortMapEntries);
+  }
+
+  return map;
+}
+
+const map = {
+  createNode: createMap,
+  default: true,
+  nodeClass: resolveSeq.YAMLMap,
+  tag: 'tag:yaml.org,2002:map',
+  resolve: resolveSeq.resolveMap
+};
+
+function createSeq(schema, obj, ctx) {
+  const seq = new resolveSeq.YAMLSeq(schema);
+
+  if (obj && obj[Symbol.iterator]) {
+    for (const it of obj) {
+      const v = schema.createNode(it, ctx.wrapScalars, null, ctx);
+      seq.items.push(v);
+    }
+  }
+
+  return seq;
+}
+
+const seq = {
+  createNode: createSeq,
+  default: true,
+  nodeClass: resolveSeq.YAMLSeq,
+  tag: 'tag:yaml.org,2002:seq',
+  resolve: resolveSeq.resolveSeq
+};
+
+const string = {
+  identify: value => typeof value === 'string',
+  default: true,
+  tag: 'tag:yaml.org,2002:str',
+  resolve: resolveSeq.resolveString,
+
+  stringify(item, ctx, onComment, onChompKeep) {
+    ctx = Object.assign({
+      actualString: true
+    }, ctx);
+    return resolveSeq.stringifyString(item, ctx, onComment, onChompKeep);
+  },
+
+  options: resolveSeq.strOptions
+};
+
+const failsafe = [map, seq, string];
+
+/* global BigInt */
+
+const intIdentify$2 = value => typeof value === 'bigint' || Number.isInteger(value);
+
+const intResolve$1 = (src, part, radix) => resolveSeq.intOptions.asBigInt ? BigInt(src) : parseInt(part, radix);
+
+function intStringify$1(node, radix, prefix) {
+  const {
+    value
+  } = node;
+  if (intIdentify$2(value) && value >= 0) return prefix + value.toString(radix);
+  return resolveSeq.stringifyNumber(node);
+}
+
+const nullObj = {
+  identify: value => value == null,
+  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
+  default: true,
+  tag: 'tag:yaml.org,2002:null',
+  test: /^(?:~|[Nn]ull|NULL)?$/,
+  resolve: () => null,
+  options: resolveSeq.nullOptions,
+  stringify: () => resolveSeq.nullOptions.nullStr
+};
+const boolObj = {
+  identify: value => typeof value === 'boolean',
+  default: true,
+  tag: 'tag:yaml.org,2002:bool',
+  test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
+  resolve: str => str[0] === 't' || str[0] === 'T',
+  options: resolveSeq.boolOptions,
+  stringify: ({
+    value
+  }) => value ? resolveSeq.boolOptions.trueStr : resolveSeq.boolOptions.falseStr
+};
+const octObj = {
+  identify: value => intIdentify$2(value) && value >= 0,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'OCT',
+  test: /^0o([0-7]+)$/,
+  resolve: (str, oct) => intResolve$1(str, oct, 8),
+  options: resolveSeq.intOptions,
+  stringify: node => intStringify$1(node, 8, '0o')
+};
+const intObj = {
+  identify: intIdentify$2,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  test: /^[-+]?[0-9]+$/,
+  resolve: str => intResolve$1(str, str, 10),
+  options: resolveSeq.intOptions,
+  stringify: resolveSeq.stringifyNumber
+};
+const hexObj = {
+  identify: value => intIdentify$2(value) && value >= 0,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'HEX',
+  test: /^0x([0-9a-fA-F]+)$/,
+  resolve: (str, hex) => intResolve$1(str, hex, 16),
+  options: resolveSeq.intOptions,
+  stringify: node => intStringify$1(node, 16, '0x')
+};
+const nanObj = {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  test: /^(?:[-+]?\.inf|(\.nan))$/i,
+  resolve: (str, nan) => nan ? NaN : str[0] === '-' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+  stringify: resolveSeq.stringifyNumber
+};
+const expObj = {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  format: 'EXP',
+  test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
+  resolve: str => parseFloat(str),
+  stringify: ({
+    value
+  }) => Number(value).toExponential()
+};
+const floatObj = {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  test: /^[-+]?(?:\.([0-9]+)|[0-9]+\.([0-9]*))$/,
+
+  resolve(str, frac1, frac2) {
+    const frac = frac1 || frac2;
+    const node = new resolveSeq.Scalar(parseFloat(str));
+    if (frac && frac[frac.length - 1] === '0') node.minFractionDigits = frac.length;
+    return node;
+  },
+
+  stringify: resolveSeq.stringifyNumber
+};
+const core = failsafe.concat([nullObj, boolObj, octObj, intObj, hexObj, nanObj, expObj, floatObj]);
+
+/* global BigInt */
+
+const intIdentify$1 = value => typeof value === 'bigint' || Number.isInteger(value);
+
+const stringifyJSON = ({
+  value
+}) => JSON.stringify(value);
+
+const json = [map, seq, {
+  identify: value => typeof value === 'string',
+  default: true,
+  tag: 'tag:yaml.org,2002:str',
+  resolve: resolveSeq.resolveString,
+  stringify: stringifyJSON
+}, {
+  identify: value => value == null,
+  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
+  default: true,
+  tag: 'tag:yaml.org,2002:null',
+  test: /^null$/,
+  resolve: () => null,
+  stringify: stringifyJSON
+}, {
+  identify: value => typeof value === 'boolean',
+  default: true,
+  tag: 'tag:yaml.org,2002:bool',
+  test: /^true|false$/,
+  resolve: str => str === 'true',
+  stringify: stringifyJSON
+}, {
+  identify: intIdentify$1,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  test: /^-?(?:0|[1-9][0-9]*)$/,
+  resolve: str => resolveSeq.intOptions.asBigInt ? BigInt(str) : parseInt(str, 10),
+  stringify: ({
+    value
+  }) => intIdentify$1(value) ? value.toString() : JSON.stringify(value)
+}, {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
+  resolve: str => parseFloat(str),
+  stringify: stringifyJSON
+}];
+
+json.scalarFallback = str => {
+  throw new SyntaxError(`Unresolved plain scalar ${JSON.stringify(str)}`);
+};
+
+/* global BigInt */
+
+const boolStringify = ({
+  value
+}) => value ? resolveSeq.boolOptions.trueStr : resolveSeq.boolOptions.falseStr;
+
+const intIdentify = value => typeof value === 'bigint' || Number.isInteger(value);
+
+function intResolve(sign, src, radix) {
+  let str = src.replace(/_/g, '');
+
+  if (resolveSeq.intOptions.asBigInt) {
+    switch (radix) {
+      case 2:
+        str = `0b${str}`;
+        break;
+
+      case 8:
+        str = `0o${str}`;
+        break;
+
+      case 16:
+        str = `0x${str}`;
+        break;
+    }
+
+    const n = BigInt(str);
+    return sign === '-' ? BigInt(-1) * n : n;
+  }
+
+  const n = parseInt(str, radix);
+  return sign === '-' ? -1 * n : n;
+}
+
+function intStringify(node, radix, prefix) {
+  const {
+    value
+  } = node;
+
+  if (intIdentify(value)) {
+    const str = value.toString(radix);
+    return value < 0 ? '-' + prefix + str.substr(1) : prefix + str;
+  }
+
+  return resolveSeq.stringifyNumber(node);
+}
+
+const yaml11 = failsafe.concat([{
+  identify: value => value == null,
+  createNode: (schema, value, ctx) => ctx.wrapScalars ? new resolveSeq.Scalar(null) : null,
+  default: true,
+  tag: 'tag:yaml.org,2002:null',
+  test: /^(?:~|[Nn]ull|NULL)?$/,
+  resolve: () => null,
+  options: resolveSeq.nullOptions,
+  stringify: () => resolveSeq.nullOptions.nullStr
+}, {
+  identify: value => typeof value === 'boolean',
+  default: true,
+  tag: 'tag:yaml.org,2002:bool',
+  test: /^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/,
+  resolve: () => true,
+  options: resolveSeq.boolOptions,
+  stringify: boolStringify
+}, {
+  identify: value => typeof value === 'boolean',
+  default: true,
+  tag: 'tag:yaml.org,2002:bool',
+  test: /^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/i,
+  resolve: () => false,
+  options: resolveSeq.boolOptions,
+  stringify: boolStringify
+}, {
+  identify: intIdentify,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'BIN',
+  test: /^([-+]?)0b([0-1_]+)$/,
+  resolve: (str, sign, bin) => intResolve(sign, bin, 2),
+  stringify: node => intStringify(node, 2, '0b')
+}, {
+  identify: intIdentify,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'OCT',
+  test: /^([-+]?)0([0-7_]+)$/,
+  resolve: (str, sign, oct) => intResolve(sign, oct, 8),
+  stringify: node => intStringify(node, 8, '0')
+}, {
+  identify: intIdentify,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  test: /^([-+]?)([0-9][0-9_]*)$/,
+  resolve: (str, sign, abs) => intResolve(sign, abs, 10),
+  stringify: resolveSeq.stringifyNumber
+}, {
+  identify: intIdentify,
+  default: true,
+  tag: 'tag:yaml.org,2002:int',
+  format: 'HEX',
+  test: /^([-+]?)0x([0-9a-fA-F_]+)$/,
+  resolve: (str, sign, hex) => intResolve(sign, hex, 16),
+  stringify: node => intStringify(node, 16, '0x')
+}, {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  test: /^(?:[-+]?\.inf|(\.nan))$/i,
+  resolve: (str, nan) => nan ? NaN : str[0] === '-' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+  stringify: resolveSeq.stringifyNumber
+}, {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  format: 'EXP',
+  test: /^[-+]?([0-9][0-9_]*)?(\.[0-9_]*)?[eE][-+]?[0-9]+$/,
+  resolve: str => parseFloat(str.replace(/_/g, '')),
+  stringify: ({
+    value
+  }) => Number(value).toExponential()
+}, {
+  identify: value => typeof value === 'number',
+  default: true,
+  tag: 'tag:yaml.org,2002:float',
+  test: /^[-+]?(?:[0-9][0-9_]*)?\.([0-9_]*)$/,
+
+  resolve(str, frac) {
+    const node = new resolveSeq.Scalar(parseFloat(str.replace(/_/g, '')));
+
+    if (frac) {
+      const f = frac.replace(/_/g, '');
+      if (f[f.length - 1] === '0') node.minFractionDigits = f.length;
+    }
+
+    return node;
+  },
+
+  stringify: resolveSeq.stringifyNumber
+}], warnings.binary, warnings.omap, warnings.pairs, warnings.set, warnings.intTime, warnings.floatTime, warnings.timestamp);
+
+const schemas = {
+  core,
+  failsafe,
+  json,
+  yaml11
+};
+const tags = {
+  binary: warnings.binary,
+  bool: boolObj,
+  float: floatObj,
+  floatExp: expObj,
+  floatNaN: nanObj,
+  floatTime: warnings.floatTime,
+  int: intObj,
+  intHex: hexObj,
+  intOct: octObj,
+  intTime: warnings.intTime,
+  map,
+  null: nullObj,
+  omap: warnings.omap,
+  pairs: warnings.pairs,
+  seq,
+  set: warnings.set,
+  timestamp: warnings.timestamp
+};
+
+function findTagObject(value, tagName, tags) {
+  if (tagName) {
+    const match = tags.filter(t => t.tag === tagName);
+    const tagObj = match.find(t => !t.format) || match[0];
+    if (!tagObj) throw new Error(`Tag ${tagName} not found`);
+    return tagObj;
+  } // TODO: deprecate/remove class check
+
+
+  return tags.find(t => (t.identify && t.identify(value) || t.class && value instanceof t.class) && !t.format);
+}
+
+function createNode(value, tagName, ctx) {
+  if (value instanceof resolveSeq.Node) return value;
+  const {
+    defaultPrefix,
+    onTagObj,
+    prevObjects,
+    schema,
+    wrapScalars
+  } = ctx;
+  if (tagName && tagName.startsWith('!!')) tagName = defaultPrefix + tagName.slice(2);
+  let tagObj = findTagObject(value, tagName, schema.tags);
+
+  if (!tagObj) {
+    if (typeof value.toJSON === 'function') value = value.toJSON();
+    if (!value || typeof value !== 'object') return wrapScalars ? new resolveSeq.Scalar(value) : value;
+    tagObj = value instanceof Map ? map : value[Symbol.iterator] ? seq : map;
+  }
+
+  if (onTagObj) {
+    onTagObj(tagObj);
+    delete ctx.onTagObj;
+  } // Detect duplicate references to the same object & use Alias nodes for all
+  // after first. The `obj` wrapper allows for circular references to resolve.
+
+
+  const obj = {
+    value: undefined,
+    node: undefined
+  };
+
+  if (value && typeof value === 'object' && prevObjects) {
+    const prev = prevObjects.get(value);
+
+    if (prev) {
+      const alias = new resolveSeq.Alias(prev); // leaves source dirty; must be cleaned by caller
+
+      ctx.aliasNodes.push(alias); // defined along with prevObjects
+
+      return alias;
+    }
+
+    obj.value = value;
+    prevObjects.set(value, obj);
+  }
+
+  obj.node = tagObj.createNode ? tagObj.createNode(ctx.schema, value, ctx) : wrapScalars ? new resolveSeq.Scalar(value) : value;
+  if (tagName && obj.node instanceof resolveSeq.Node) obj.node.tag = tagName;
+  return obj.node;
+}
+
+function getSchemaTags(schemas, knownTags, customTags, schemaId) {
+  let tags = schemas[schemaId.replace(/\W/g, '')]; // 'yaml-1.1' -> 'yaml11'
+
+  if (!tags) {
+    const keys = Object.keys(schemas).map(key => JSON.stringify(key)).join(', ');
+    throw new Error(`Unknown schema "${schemaId}"; use one of ${keys}`);
+  }
+
+  if (Array.isArray(customTags)) {
+    for (const tag of customTags) tags = tags.concat(tag);
+  } else if (typeof customTags === 'function') {
+    tags = customTags(tags.slice());
+  }
+
+  for (let i = 0; i < tags.length; ++i) {
+    const tag = tags[i];
+
+    if (typeof tag === 'string') {
+      const tagObj = knownTags[tag];
+
+      if (!tagObj) {
+        const keys = Object.keys(knownTags).map(key => JSON.stringify(key)).join(', ');
+        throw new Error(`Unknown custom tag "${tag}"; use one of ${keys}`);
+      }
+
+      tags[i] = tagObj;
+    }
+  }
+
+  return tags;
+}
+
+const sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+
+class Schema {
+  // TODO: remove in v2
+  // TODO: remove in v2
+  constructor({
+    customTags,
+    merge,
+    schema,
+    sortMapEntries,
+    tags: deprecatedCustomTags
+  }) {
+    this.merge = !!merge;
+    this.name = schema;
+    this.sortMapEntries = sortMapEntries === true ? sortMapEntriesByKey : sortMapEntries || null;
+    if (!customTags && deprecatedCustomTags) warnings.warnOptionDeprecation('tags', 'customTags');
+    this.tags = getSchemaTags(schemas, tags, customTags || deprecatedCustomTags, schema);
+  }
+
+  createNode(value, wrapScalars, tagName, ctx) {
+    const baseCtx = {
+      defaultPrefix: Schema.defaultPrefix,
+      schema: this,
+      wrapScalars
+    };
+    const createCtx = ctx ? Object.assign(ctx, baseCtx) : baseCtx;
+    return createNode(value, tagName, createCtx);
+  }
+
+  createPair(key, value, ctx) {
+    if (!ctx) ctx = {
+      wrapScalars: true
+    };
+    const k = this.createNode(key, ctx.wrapScalars, null, ctx);
+    const v = this.createNode(value, ctx.wrapScalars, null, ctx);
+    return new resolveSeq.Pair(k, v);
+  }
+
+}
+
+PlainValue._defineProperty(Schema, "defaultPrefix", PlainValue.defaultTagPrefix);
+
+PlainValue._defineProperty(Schema, "defaultTags", PlainValue.defaultTags);
+
+exports.Schema = Schema;
+
+
+/***/ }),
 /* 482 */,
 /* 483 */,
 /* 484 */,
@@ -35923,12 +36060,7 @@ module.exports = async (repositoryUrl, {cwd}, branches) => {
 /* 493 */,
 /* 494 */,
 /* 495 */,
-/* 496 */
-/***/ (function(module) {
-
-module.exports = require("readline");
-
-/***/ }),
+/* 496 */,
 /* 497 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -36157,7 +36289,56 @@ module.exports = coerce
 
 /***/ }),
 /* 500 */,
-/* 501 */,
+/* 501 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+const {promisify} = __webpack_require__(669);
+const fs = __webpack_require__(747);
+
+async function isType(fsStatType, statsMethodName, filePath) {
+	if (typeof filePath !== 'string') {
+		throw new TypeError(`Expected a string, got ${typeof filePath}`);
+	}
+
+	try {
+		const stats = await promisify(fs[fsStatType])(filePath);
+		return stats[statsMethodName]();
+	} catch (error) {
+		if (error.code === 'ENOENT') {
+			return false;
+		}
+
+		throw error;
+	}
+}
+
+function isTypeSync(fsStatType, statsMethodName, filePath) {
+	if (typeof filePath !== 'string') {
+		throw new TypeError(`Expected a string, got ${typeof filePath}`);
+	}
+
+	try {
+		return fs[fsStatType](filePath)[statsMethodName]();
+	} catch (error) {
+		if (error.code === 'ENOENT') {
+			return false;
+		}
+
+		throw error;
+	}
+}
+
+exports.isFile = isType.bind(null, 'stat', 'isFile');
+exports.isDirectory = isType.bind(null, 'stat', 'isDirectory');
+exports.isSymlink = isType.bind(null, 'lstat', 'isSymbolicLink');
+exports.isFileSync = isTypeSync.bind(null, 'statSync', 'isFile');
+exports.isDirectorySync = isTypeSync.bind(null, 'statSync', 'isDirectory');
+exports.isSymlinkSync = isTypeSync.bind(null, 'lstatSync', 'isSymbolicLink');
+
+
+/***/ }),
 /* 502 */,
 /* 503 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -36180,51 +36361,51 @@ module.exports = clean
 /* 510 */
 /***/ (function(module) {
 
-module.exports = addHook
+module.exports = addHook;
 
-function addHook (state, kind, name, hook) {
-  var orig = hook
+function addHook(state, kind, name, hook) {
+  var orig = hook;
   if (!state.registry[name]) {
-    state.registry[name] = []
+    state.registry[name] = [];
   }
 
-  if (kind === 'before') {
+  if (kind === "before") {
     hook = function (method, options) {
       return Promise.resolve()
         .then(orig.bind(null, options))
-        .then(method.bind(null, options))
-    }
+        .then(method.bind(null, options));
+    };
   }
 
-  if (kind === 'after') {
+  if (kind === "after") {
     hook = function (method, options) {
-      var result
+      var result;
       return Promise.resolve()
         .then(method.bind(null, options))
         .then(function (result_) {
-          result = result_
-          return orig(result, options)
+          result = result_;
+          return orig(result, options);
         })
         .then(function () {
-          return result
-        })
-    }
+          return result;
+        });
+    };
   }
 
-  if (kind === 'error') {
+  if (kind === "error") {
     hook = function (method, options) {
       return Promise.resolve()
         .then(method.bind(null, options))
         .catch(function (error) {
-          return orig(error, options)
-        })
-    }
+          return orig(error, options);
+        });
+    };
   }
 
   state.registry[name].push({
     hook: hook,
-    orig: orig
-  })
+    orig: orig,
+  });
 }
 
 
@@ -37224,7 +37405,7 @@ exports.defaultTags = defaultTags;
 "use strict";
 
 const isStream = __webpack_require__(323);
-const getStream = __webpack_require__(145);
+const getStream = __webpack_require__(79);
 const mergeStream = __webpack_require__(778);
 
 // `input` option
@@ -37322,19 +37503,309 @@ module.exports = {
 
 
 /***/ }),
-/* 517 */,
-/* 518 */
-/***/ (function(module) {
+/* 517 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
-module.exports = (flag, argv) => {
-	argv = argv || process.argv;
-	const prefix = flag.startsWith('-') ? '' : (flag.length === 1 ? '-' : '--');
-	const pos = argv.indexOf(prefix + flag);
-	const terminatorPos = argv.indexOf('--');
-	return pos !== -1 && (terminatorPos === -1 ? true : pos < terminatorPos);
+const escapeStringRegexp = __webpack_require__(138);
+
+const {platform} = process;
+
+const main = {
+	tick: '✔',
+	cross: '✖',
+	star: '★',
+	square: '▇',
+	squareSmall: '◻',
+	squareSmallFilled: '◼',
+	play: '▶',
+	circle: '◯',
+	circleFilled: '◉',
+	circleDotted: '◌',
+	circleDouble: '◎',
+	circleCircle: 'ⓞ',
+	circleCross: 'ⓧ',
+	circlePipe: 'Ⓘ',
+	circleQuestionMark: '?⃝',
+	bullet: '●',
+	dot: '․',
+	line: '─',
+	ellipsis: '…',
+	pointer: '❯',
+	pointerSmall: '›',
+	info: 'ℹ',
+	warning: '⚠',
+	hamburger: '☰',
+	smiley: '㋡',
+	mustache: '෴',
+	heart: '♥',
+	nodejs: '⬢',
+	arrowUp: '↑',
+	arrowDown: '↓',
+	arrowLeft: '←',
+	arrowRight: '→',
+	radioOn: '◉',
+	radioOff: '◯',
+	checkboxOn: '☒',
+	checkboxOff: '☐',
+	checkboxCircleOn: 'ⓧ',
+	checkboxCircleOff: 'Ⓘ',
+	questionMarkPrefix: '?⃝',
+	oneHalf: '½',
+	oneThird: '⅓',
+	oneQuarter: '¼',
+	oneFifth: '⅕',
+	oneSixth: '⅙',
+	oneSeventh: '⅐',
+	oneEighth: '⅛',
+	oneNinth: '⅑',
+	oneTenth: '⅒',
+	twoThirds: '⅔',
+	twoFifths: '⅖',
+	threeQuarters: '¾',
+	threeFifths: '⅗',
+	threeEighths: '⅜',
+	fourFifths: '⅘',
+	fiveSixths: '⅚',
+	fiveEighths: '⅝',
+	sevenEighths: '⅞'
 };
+
+const windows = {
+	tick: '√',
+	cross: '×',
+	star: '*',
+	square: '█',
+	squareSmall: '[ ]',
+	squareSmallFilled: '[█]',
+	play: '►',
+	circle: '( )',
+	circleFilled: '(*)',
+	circleDotted: '( )',
+	circleDouble: '( )',
+	circleCircle: '(○)',
+	circleCross: '(×)',
+	circlePipe: '(│)',
+	circleQuestionMark: '(?)',
+	bullet: '*',
+	dot: '.',
+	line: '─',
+	ellipsis: '...',
+	pointer: '>',
+	pointerSmall: '»',
+	info: 'i',
+	warning: '‼',
+	hamburger: '≡',
+	smiley: '☺',
+	mustache: '┌─┐',
+	heart: main.heart,
+	nodejs: '♦',
+	arrowUp: main.arrowUp,
+	arrowDown: main.arrowDown,
+	arrowLeft: main.arrowLeft,
+	arrowRight: main.arrowRight,
+	radioOn: '(*)',
+	radioOff: '( )',
+	checkboxOn: '[×]',
+	checkboxOff: '[ ]',
+	checkboxCircleOn: '(×)',
+	checkboxCircleOff: '( )',
+	questionMarkPrefix: '？',
+	oneHalf: '1/2',
+	oneThird: '1/3',
+	oneQuarter: '1/4',
+	oneFifth: '1/5',
+	oneSixth: '1/6',
+	oneSeventh: '1/7',
+	oneEighth: '1/8',
+	oneNinth: '1/9',
+	oneTenth: '1/10',
+	twoThirds: '2/3',
+	twoFifths: '2/5',
+	threeQuarters: '3/4',
+	threeFifths: '3/5',
+	threeEighths: '3/8',
+	fourFifths: '4/5',
+	fiveSixths: '5/6',
+	fiveEighths: '5/8',
+	sevenEighths: '7/8'
+};
+
+if (platform === 'linux') {
+	// The main one doesn't look that good on Ubuntu.
+	main.questionMarkPrefix = '?';
+}
+
+const figures = platform === 'win32' ? windows : main;
+
+const fn = string => {
+	if (figures === main) {
+		return string;
+	}
+
+	for (const [key, value] of Object.entries(main)) {
+		if (value === figures[key]) {
+			continue;
+		}
+
+		string = string.replace(new RegExp(escapeStringRegexp(value), 'g'), figures[key]);
+	}
+
+	return string;
+};
+
+module.exports = Object.assign(fn, figures);
+module.exports.main = main;
+module.exports.windows = windows;
+
+
+/***/ }),
+/* 518 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var util = __webpack_require__(669);
+var isArrayish = __webpack_require__(156);
+
+var errorEx = function errorEx(name, properties) {
+	if (!name || name.constructor !== String) {
+		properties = name || {};
+		name = Error.name;
+	}
+
+	var errorExError = function ErrorEXError(message) {
+		if (!this) {
+			return new ErrorEXError(message);
+		}
+
+		message = message instanceof Error
+			? message.message
+			: (message || this.message);
+
+		Error.call(this, message);
+		Error.captureStackTrace(this, errorExError);
+
+		this.name = name;
+
+		Object.defineProperty(this, 'message', {
+			configurable: true,
+			enumerable: false,
+			get: function () {
+				var newMessage = message.split(/\r?\n/g);
+
+				for (var key in properties) {
+					if (!properties.hasOwnProperty(key)) {
+						continue;
+					}
+
+					var modifier = properties[key];
+
+					if ('message' in modifier) {
+						newMessage = modifier.message(this[key], newMessage) || newMessage;
+						if (!isArrayish(newMessage)) {
+							newMessage = [newMessage];
+						}
+					}
+				}
+
+				return newMessage.join('\n');
+			},
+			set: function (v) {
+				message = v;
+			}
+		});
+
+		var overwrittenStack = null;
+
+		var stackDescriptor = Object.getOwnPropertyDescriptor(this, 'stack');
+		var stackGetter = stackDescriptor.get;
+		var stackValue = stackDescriptor.value;
+		delete stackDescriptor.value;
+		delete stackDescriptor.writable;
+
+		stackDescriptor.set = function (newstack) {
+			overwrittenStack = newstack;
+		};
+
+		stackDescriptor.get = function () {
+			var stack = (overwrittenStack || ((stackGetter)
+				? stackGetter.call(this)
+				: stackValue)).split(/\r?\n+/g);
+
+			// starting in Node 7, the stack builder caches the message.
+			// just replace it.
+			if (!overwrittenStack) {
+				stack[0] = this.name + ': ' + this.message;
+			}
+
+			var lineCount = 1;
+			for (var key in properties) {
+				if (!properties.hasOwnProperty(key)) {
+					continue;
+				}
+
+				var modifier = properties[key];
+
+				if ('line' in modifier) {
+					var line = modifier.line(this[key]);
+					if (line) {
+						stack.splice(lineCount++, 0, '    ' + line);
+					}
+				}
+
+				if ('stack' in modifier) {
+					modifier.stack(this[key], stack);
+				}
+			}
+
+			return stack.join('\n');
+		};
+
+		Object.defineProperty(this, 'stack', stackDescriptor);
+	};
+
+	if (Object.setPrototypeOf) {
+		Object.setPrototypeOf(errorExError.prototype, Error.prototype);
+		Object.setPrototypeOf(errorExError, Error);
+	} else {
+		util.inherits(errorExError, Error);
+	}
+
+	return errorExError;
+};
+
+errorEx.append = function (str, def) {
+	return {
+		message: function (v, message) {
+			v = v || def;
+
+			if (v) {
+				message[0] += ' ' + str.replace('%s', v.toString());
+			}
+
+			return message;
+		}
+	};
+};
+
+errorEx.line = function (str, def) {
+	return {
+		line: function (v) {
+			v = v || def;
+
+			if (v) {
+				return str.replace('%s', v.toString());
+			}
+
+			return null;
+		}
+	};
+};
+
+module.exports = errorEx;
 
 
 /***/ }),
@@ -37751,7 +38222,7 @@ function done(stream, er, data) {
 /* 529 */
 /***/ (function(module) {
 
-module.exports = {"assert":true,"async_hooks":">= 8","buffer_ieee754":"< 0.9.7","buffer":true,"child_process":true,"cluster":true,"console":true,"constants":true,"crypto":true,"_debug_agent":">= 1 && < 8","_debugger":"< 8","dgram":true,"dns":true,"domain":true,"events":true,"freelist":"< 6","fs":true,"fs/promises":[">= 10 && < 10.1",">= 14"],"_http_agent":">= 0.11.1","_http_client":">= 0.11.1","_http_common":">= 0.11.1","_http_incoming":">= 0.11.1","_http_outgoing":">= 0.11.1","_http_server":">= 0.11.1","http":true,"http2":">= 8.8","https":true,"inspector":">= 8.0.0","_linklist":"< 8","module":true,"net":true,"node-inspect/lib/_inspect":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_client":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_repl":">= 7.6.0 && < 12","os":true,"path":true,"perf_hooks":">= 8.5","process":">= 1","punycode":true,"querystring":true,"readline":true,"repl":true,"smalloc":">= 0.11.5 && < 3","_stream_duplex":">= 0.9.4","_stream_transform":">= 0.9.4","_stream_wrap":">= 1.4.1","_stream_passthrough":">= 0.9.4","_stream_readable":">= 0.9.4","_stream_writable":">= 0.9.4","stream":true,"string_decoder":true,"sys":true,"timers":true,"_tls_common":">= 0.11.13","_tls_legacy":">= 0.11.3 && < 10","_tls_wrap":">= 0.11.3","tls":true,"trace_events":">= 10","tty":true,"url":true,"util":true,"v8/tools/arguments":">= 10 && < 12","v8/tools/codemap":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/consarray":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/csvparser":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/logreader":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/profile_view":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/splaytree":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8":">= 1","vm":true,"wasi":">= 13.4 && < 13.5","worker_threads":">= 11.7","zlib":true};
+module.exports = {"assert":true,"assert/strict":">= 15","async_hooks":">= 8","buffer_ieee754":"< 0.9.7","buffer":true,"child_process":true,"cluster":true,"console":true,"constants":true,"crypto":true,"_debug_agent":">= 1 && < 8","_debugger":"< 8","dgram":true,"diagnostics_channel":">= 15.1","dns":true,"dns/promises":">= 15","domain":">= 0.7.12","events":true,"freelist":"< 6","fs":true,"fs/promises":[">= 10 && < 10.1",">= 14"],"_http_agent":">= 0.11.1","_http_client":">= 0.11.1","_http_common":">= 0.11.1","_http_incoming":">= 0.11.1","_http_outgoing":">= 0.11.1","_http_server":">= 0.11.1","http":true,"http2":">= 8.8","https":true,"inspector":">= 8.0.0","_linklist":"< 8","module":true,"net":true,"node-inspect/lib/_inspect":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_client":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_repl":">= 7.6.0 && < 12","os":true,"path":true,"path/posix":">= 15.3","path/win32":">= 15.3","perf_hooks":">= 8.5","process":">= 1","punycode":true,"querystring":true,"readline":true,"repl":true,"smalloc":">= 0.11.5 && < 3","_stream_duplex":">= 0.9.4","_stream_transform":">= 0.9.4","_stream_wrap":">= 1.4.1","_stream_passthrough":">= 0.9.4","_stream_readable":">= 0.9.4","_stream_writable":">= 0.9.4","stream":true,"stream/promises":">= 15","string_decoder":true,"sys":[">= 0.6 && < 0.7",">= 0.8"],"timers":true,"timers/promises":">= 15","_tls_common":">= 0.11.13","_tls_legacy":">= 0.11.3 && < 10","_tls_wrap":">= 0.11.3","tls":true,"trace_events":">= 10","tty":true,"url":true,"util":true,"util/types":">= 15.3","v8/tools/arguments":">= 10 && < 12","v8/tools/codemap":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/consarray":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/csvparser":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/logreader":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/profile_view":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/splaytree":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8":">= 1","vm":true,"wasi":">= 13.4 && < 13.5","worker_threads":">= 11.7","zlib":true};
 
 /***/ }),
 /* 530 */,
@@ -37865,7 +38336,7 @@ module.exports = makeError;
 /* 537 */
 /***/ (function(module) {
 
-module.exports = ["AGPL-1.0","AGPL-3.0","GFDL-1.1","GFDL-1.2","GFDL-1.3","GPL-1.0","GPL-2.0","GPL-2.0-with-GCC-exception","GPL-2.0-with-autoconf-exception","GPL-2.0-with-bison-exception","GPL-2.0-with-classpath-exception","GPL-2.0-with-font-exception","GPL-3.0","GPL-3.0-with-GCC-exception","GPL-3.0-with-autoconf-exception","LGPL-2.0","LGPL-2.1","LGPL-3.0","Nunit","StandardML-NJ","eCos-2.0","wxWindows"];
+module.exports = ["AGPL-1.0","AGPL-3.0","BSD-2-Clause-FreeBSD","BSD-2-Clause-NetBSD","GFDL-1.1","GFDL-1.2","GFDL-1.3","GPL-1.0","GPL-2.0","GPL-2.0-with-GCC-exception","GPL-2.0-with-autoconf-exception","GPL-2.0-with-bison-exception","GPL-2.0-with-classpath-exception","GPL-2.0-with-font-exception","GPL-3.0","GPL-3.0-with-GCC-exception","GPL-3.0-with-autoconf-exception","LGPL-2.0","LGPL-2.1","LGPL-3.0","Nunit","StandardML-NJ","eCos-2.0","wxWindows"];
 
 /***/ }),
 /* 538 */,
@@ -37875,7 +38346,6 @@ module.exports = ["AGPL-1.0","AGPL-3.0","GFDL-1.1","GFDL-1.2","GFDL-1.3","GPL-1.
 "use strict";
 
 Object.defineProperty(exports, "__esModule", { value: true });
-const url = __webpack_require__(835);
 const http = __webpack_require__(605);
 const https = __webpack_require__(211);
 const pm = __webpack_require__(950);
@@ -37924,7 +38394,7 @@ var MediaTypes;
  * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
  */
 function getProxyUrl(serverUrl) {
-    let proxyUrl = pm.getProxyUrl(url.parse(serverUrl));
+    let proxyUrl = pm.getProxyUrl(new URL(serverUrl));
     return proxyUrl ? proxyUrl.href : '';
 }
 exports.getProxyUrl = getProxyUrl;
@@ -37943,6 +38413,15 @@ const HttpResponseRetryCodes = [
 const RetryableHttpVerbs = ['OPTIONS', 'GET', 'DELETE', 'HEAD'];
 const ExponentialBackoffCeiling = 10;
 const ExponentialBackoffTimeSlice = 5;
+class HttpClientError extends Error {
+    constructor(message, statusCode) {
+        super(message);
+        this.name = 'HttpClientError';
+        this.statusCode = statusCode;
+        Object.setPrototypeOf(this, HttpClientError.prototype);
+    }
+}
+exports.HttpClientError = HttpClientError;
 class HttpClientResponse {
     constructor(message) {
         this.message = message;
@@ -37961,7 +38440,7 @@ class HttpClientResponse {
 }
 exports.HttpClientResponse = HttpClientResponse;
 function isHttps(requestUrl) {
-    let parsedUrl = url.parse(requestUrl);
+    let parsedUrl = new URL(requestUrl);
     return parsedUrl.protocol === 'https:';
 }
 exports.isHttps = isHttps;
@@ -38066,7 +38545,7 @@ class HttpClient {
         if (this._disposed) {
             throw new Error('Client has already been disposed.');
         }
-        let parsedUrl = url.parse(requestUrl);
+        let parsedUrl = new URL(requestUrl);
         let info = this._prepareRequest(verb, parsedUrl, headers);
         // Only perform retries on reads since writes may not be idempotent.
         let maxTries = this._allowRetries && RetryableHttpVerbs.indexOf(verb) != -1
@@ -38105,7 +38584,7 @@ class HttpClient {
                     // if there's no location to redirect to, we won't
                     break;
                 }
-                let parsedRedirectUrl = url.parse(redirectUrl);
+                let parsedRedirectUrl = new URL(redirectUrl);
                 if (parsedUrl.protocol == 'https:' &&
                     parsedUrl.protocol != parsedRedirectUrl.protocol &&
                     !this._allowRedirectDowngrade) {
@@ -38221,7 +38700,7 @@ class HttpClient {
      * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
      */
     getAgent(serverUrl) {
-        let parsedUrl = url.parse(serverUrl);
+        let parsedUrl = new URL(serverUrl);
         return this._getAgent(parsedUrl);
     }
     _prepareRequest(method, requestUrl, headers) {
@@ -38294,7 +38773,9 @@ class HttpClient {
                 maxSockets: maxSockets,
                 keepAlive: this._keepAlive,
                 proxy: {
-                    proxyAuth: proxyUrl.auth,
+                    ...((proxyUrl.username || proxyUrl.password) && {
+                        proxyAuth: `${proxyUrl.username}:${proxyUrl.password}`
+                    }),
                     host: proxyUrl.hostname,
                     port: proxyUrl.port
                 }
@@ -38389,12 +38870,8 @@ class HttpClient {
                 else {
                     msg = 'Failed request: (' + statusCode + ')';
                 }
-                let err = new Error(msg);
-                // attach statusCode and body obj (if available) to the error object
-                err['statusCode'] = statusCode;
-                if (response.result) {
-                    err['result'] = response.result;
-                }
+                let err = new HttpClientError(msg, statusCode);
+                err.result = response.result;
                 reject(err);
             }
             else {
@@ -38440,86 +38917,7 @@ module.exports = {
 
 
 /***/ }),
-/* 546 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-
-/*<replacement>*/
-
-var pna = __webpack_require__(334);
-/*</replacement>*/
-
-// undocumented cb() API, needed for core, not for public API
-function destroy(err, cb) {
-  var _this = this;
-
-  var readableDestroyed = this._readableState && this._readableState.destroyed;
-  var writableDestroyed = this._writableState && this._writableState.destroyed;
-
-  if (readableDestroyed || writableDestroyed) {
-    if (cb) {
-      cb(err);
-    } else if (err && (!this._writableState || !this._writableState.errorEmitted)) {
-      pna.nextTick(emitErrorNT, this, err);
-    }
-    return this;
-  }
-
-  // we set destroyed to true before firing error callbacks in order
-  // to make it re-entrance safe in case destroy() is called within callbacks
-
-  if (this._readableState) {
-    this._readableState.destroyed = true;
-  }
-
-  // if this is a duplex stream mark the writable part as destroyed as well
-  if (this._writableState) {
-    this._writableState.destroyed = true;
-  }
-
-  this._destroy(err || null, function (err) {
-    if (!cb && err) {
-      pna.nextTick(emitErrorNT, _this, err);
-      if (_this._writableState) {
-        _this._writableState.errorEmitted = true;
-      }
-    } else if (cb) {
-      cb(err);
-    }
-  });
-
-  return this;
-}
-
-function undestroy() {
-  if (this._readableState) {
-    this._readableState.destroyed = false;
-    this._readableState.reading = false;
-    this._readableState.ended = false;
-    this._readableState.endEmitted = false;
-  }
-
-  if (this._writableState) {
-    this._writableState.destroyed = false;
-    this._writableState.ended = false;
-    this._writableState.ending = false;
-    this._writableState.finished = false;
-    this._writableState.errorEmitted = false;
-  }
-}
-
-function emitErrorNT(self, err) {
-  self.emit('error', err);
-}
-
-module.exports = {
-  destroy: destroy,
-  undestroy: undestroy
-};
-
-/***/ }),
+/* 546 */,
 /* 547 */
 /***/ (function(module) {
 
@@ -38691,14 +39089,15 @@ module.exports.DuplexWrapper = DuplexWrapper;
   var undefined;
 
   /** Used as the semantic version number. */
-  var VERSION = '4.17.19';
+  var VERSION = '4.17.21';
 
   /** Used as the size to enable large array optimizations. */
   var LARGE_ARRAY_SIZE = 200;
 
   /** Error message constants. */
   var CORE_ERROR_TEXT = 'Unsupported core-js use. Try https://npms.io/search?q=ponyfill.',
-      FUNC_ERROR_TEXT = 'Expected a function';
+      FUNC_ERROR_TEXT = 'Expected a function',
+      INVALID_TEMPL_VAR_ERROR_TEXT = 'Invalid `variable` option passed into `_.template`';
 
   /** Used to stand-in for `undefined` hash values. */
   var HASH_UNDEFINED = '__lodash_hash_undefined__';
@@ -38831,10 +39230,11 @@ module.exports.DuplexWrapper = DuplexWrapper;
   var reRegExpChar = /[\\^$.*+?()[\]{}|]/g,
       reHasRegExpChar = RegExp(reRegExpChar.source);
 
-  /** Used to match leading and trailing whitespace. */
-  var reTrim = /^\s+|\s+$/g,
-      reTrimStart = /^\s+/,
-      reTrimEnd = /\s+$/;
+  /** Used to match leading whitespace. */
+  var reTrimStart = /^\s+/;
+
+  /** Used to match a single whitespace character. */
+  var reWhitespace = /\s/;
 
   /** Used to match wrap detail comments. */
   var reWrapComment = /\{(?:\n\/\* \[wrapped with .+\] \*\/)?\n?/,
@@ -38843,6 +39243,18 @@ module.exports.DuplexWrapper = DuplexWrapper;
 
   /** Used to match words composed of alphanumeric characters. */
   var reAsciiWord = /[^\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\x7f]+/g;
+
+  /**
+   * Used to validate the `validate` option in `_.template` variable.
+   *
+   * Forbids characters which could potentially change the meaning of the function argument definition:
+   * - "()," (modification of function parameters)
+   * - "=" (default value)
+   * - "[]{}" (destructuring of function parameters)
+   * - "/" (beginning of a comment)
+   * - whitespace
+   */
+  var reForbiddenIdentifierChars = /[()=,{}\[\]\/\s]/;
 
   /** Used to match backslashes in property paths. */
   var reEscapeChar = /\\(\\)?/g;
@@ -39673,6 +40085,19 @@ module.exports.DuplexWrapper = DuplexWrapper;
   }
 
   /**
+   * The base implementation of `_.trim`.
+   *
+   * @private
+   * @param {string} string The string to trim.
+   * @returns {string} Returns the trimmed string.
+   */
+  function baseTrim(string) {
+    return string
+      ? string.slice(0, trimmedEndIndex(string) + 1).replace(reTrimStart, '')
+      : string;
+  }
+
+  /**
    * The base implementation of `_.unary` without support for storing metadata.
    *
    * @private
@@ -40003,6 +40428,21 @@ module.exports.DuplexWrapper = DuplexWrapper;
     return hasUnicode(string)
       ? unicodeToArray(string)
       : asciiToArray(string);
+  }
+
+  /**
+   * Used by `_.trim` and `_.trimEnd` to get the index of the last non-whitespace
+   * character of `string`.
+   *
+   * @private
+   * @param {string} string The string to inspect.
+   * @returns {number} Returns the index of the last non-whitespace character.
+   */
+  function trimmedEndIndex(string) {
+    var index = string.length;
+
+    while (index-- && reWhitespace.test(string.charAt(index))) {}
+    return index;
   }
 
   /**
@@ -51173,7 +51613,7 @@ module.exports.DuplexWrapper = DuplexWrapper;
       if (typeof value != 'string') {
         return value === 0 ? value : +value;
       }
-      value = value.replace(reTrim, '');
+      value = baseTrim(value);
       var isBinary = reIsBinary.test(value);
       return (isBinary || reIsOctal.test(value))
         ? freeParseInt(value.slice(2), isBinary ? 2 : 8)
@@ -53545,6 +53985,12 @@ module.exports.DuplexWrapper = DuplexWrapper;
       if (!variable) {
         source = 'with (obj) {\n' + source + '\n}\n';
       }
+      // Throw an error if a forbidden character was found in `variable`, to prevent
+      // potential command injection attacks.
+      else if (reForbiddenIdentifierChars.test(variable)) {
+        throw new Error(INVALID_TEMPL_VAR_ERROR_TEXT);
+      }
+
       // Cleanup code by stripping empty strings.
       source = (isEvaluating ? source.replace(reEmptyStringLeading, '') : source)
         .replace(reEmptyStringMiddle, '$1')
@@ -53658,7 +54104,7 @@ module.exports.DuplexWrapper = DuplexWrapper;
     function trim(string, chars, guard) {
       string = toString(string);
       if (string && (guard || chars === undefined)) {
-        return string.replace(reTrim, '');
+        return baseTrim(string);
       }
       if (!string || !(chars = baseToString(chars))) {
         return string;
@@ -53693,7 +54139,7 @@ module.exports.DuplexWrapper = DuplexWrapper;
     function trimEnd(string, chars, guard) {
       string = toString(string);
       if (string && (guard || chars === undefined)) {
-        return string.replace(reTrimEnd, '');
+        return string.slice(0, trimmedEndIndex(string) + 1);
       }
       if (!string || !(chars = baseToString(chars))) {
         return string;
@@ -54267,7 +54713,7 @@ module.exports.DuplexWrapper = DuplexWrapper;
      * // => [{ 'a': 4, 'b': 5, 'c': 6 }]
      *
      * // Checking for several possible values
-     * _.filter(users, _.overSome([_.matches({ 'a': 1 }), _.matches({ 'a': 4 })]));
+     * _.filter(objects, _.overSome([_.matches({ 'a': 1 }), _.matches({ 'a': 4 })]));
      * // => [{ 'a': 1, 'b': 2, 'c': 3 }, { 'a': 4, 'b': 5, 'c': 6 }]
      */
     function matches(source) {
@@ -54304,7 +54750,7 @@ module.exports.DuplexWrapper = DuplexWrapper;
      * // => { 'a': 4, 'b': 5, 'c': 6 }
      *
      * // Checking for several possible values
-     * _.filter(users, _.overSome([_.matchesProperty('a', 1), _.matchesProperty('a', 4)]));
+     * _.filter(objects, _.overSome([_.matchesProperty('a', 1), _.matchesProperty('a', 4)]));
      * // => [{ 'a': 1, 'b': 2, 'c': 3 }, { 'a': 4, 'b': 5, 'c': 6 }]
      */
     function matchesProperty(path, srcValue) {
@@ -56619,7 +57065,7 @@ module.exports = parse;
 
 const path = __webpack_require__(622);
 const fs = __webpack_require__(598);
-const stripBom = __webpack_require__(718);
+const stripBom = __webpack_require__(55);
 const parseJson = __webpack_require__(878);
 const pify = __webpack_require__(795);
 
@@ -56630,7 +57076,37 @@ module.exports.sync = fp => parse(fs.readFileSync(fp, 'utf8'), fp);
 
 
 /***/ }),
-/* 572 */,
+/* 572 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const path = __webpack_require__(622);
+const pathExists = __webpack_require__(860);
+const pLocate = __webpack_require__(771);
+
+module.exports = (iterable, opts) => {
+	opts = Object.assign({
+		cwd: process.cwd()
+	}, opts);
+
+	return pLocate(iterable, el => pathExists(path.resolve(opts.cwd, el)), opts);
+};
+
+module.exports.sync = (iterable, opts) => {
+	opts = Object.assign({
+		cwd: process.cwd()
+	}, opts);
+
+	for (const el of iterable) {
+		if (pathExists.sync(path.resolve(opts.cwd, el))) {
+			return el;
+		}
+	}
+};
+
+
+/***/ }),
 /* 573 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -56715,19 +57191,10 @@ module.exports = class Tokenizer {
     }
   }
 
-  code(src, tokens) {
+  code(src) {
     const cap = this.rules.block.code.exec(src);
     if (cap) {
-      const lastToken = tokens[tokens.length - 1];
-      // An indented code block cannot interrupt a paragraph.
-      if (lastToken && lastToken.type === 'paragraph') {
-        return {
-          raw: cap[0],
-          text: cap[0].trimRight()
-        };
-      }
-
-      const text = cap[0].replace(/^ {4}/gm, '');
+      const text = cap[0].replace(/^ {1,4}/gm, '');
       return {
         type: 'code',
         raw: cap[0],
@@ -56757,11 +57224,24 @@ module.exports = class Tokenizer {
   heading(src) {
     const cap = this.rules.block.heading.exec(src);
     if (cap) {
+      let text = cap[2].trim();
+
+      // remove trailing #s
+      if (/#$/.test(text)) {
+        const trimmed = rtrim(text, '#');
+        if (this.options.pedantic) {
+          text = trimmed.trim();
+        } else if (!trimmed || / $/.test(trimmed)) {
+          // CommonMark requires space before trailing #s
+          text = trimmed.trim();
+        }
+      }
+
       return {
         type: 'heading',
         raw: cap[0],
         depth: cap[1].length,
-        text: cap[2]
+        text: text
       };
     }
   }
@@ -56831,7 +57311,6 @@ module.exports = class Tokenizer {
       let raw = cap[0];
       const bull = cap[2];
       const isordered = bull.length > 1;
-      const isparen = bull[bull.length - 1] === ')';
 
       const list = {
         type: 'list',
@@ -56848,21 +57327,64 @@ module.exports = class Tokenizer {
       let next = false,
         item,
         space,
-        b,
+        bcurr,
+        bnext,
         addBack,
         loose,
         istask,
-        ischecked;
+        ischecked,
+        endMatch;
 
-      const l = itemMatch.length;
+      let l = itemMatch.length;
+      bcurr = this.rules.block.listItemStart.exec(itemMatch[0]);
       for (let i = 0; i < l; i++) {
         item = itemMatch[i];
         raw = item;
 
+        if (!this.options.pedantic) {
+          // Determine if current item contains the end of the list
+          endMatch = item.match(new RegExp('\\n\\s*\\n {0,' + (bcurr[0].length - 1) + '}\\S'));
+          if (endMatch) {
+            addBack = item.length - endMatch.index + itemMatch.slice(i + 1).join('\n').length;
+            list.raw = list.raw.substring(0, list.raw.length - addBack);
+
+            item = item.substring(0, endMatch.index);
+            raw = item;
+            l = i + 1;
+          }
+        }
+
+        // Determine whether the next list item belongs here.
+        // Backpedal if it does not belong in this list.
+        if (i !== l - 1) {
+          bnext = this.rules.block.listItemStart.exec(itemMatch[i + 1]);
+          if (
+            !this.options.pedantic
+              ? bnext[1].length >= bcurr[0].length || bnext[1].length > 3
+              : bnext[1].length > bcurr[1].length
+          ) {
+            // nested list or continuation
+            itemMatch.splice(i, 2, itemMatch[i] + (!this.options.pedantic && bnext[1].length < bcurr[0].length && !itemMatch[i].match(/\n$/) ? '' : '\n') + itemMatch[i + 1]);
+            i--;
+            l--;
+            continue;
+          } else if (
+            // different bullet style
+            !this.options.pedantic || this.options.smartLists
+              ? bnext[2][bnext[2].length - 1] !== bull[bull.length - 1]
+              : isordered === (bnext[2].length === 1)
+          ) {
+            addBack = itemMatch.slice(i + 1).join('\n').length;
+            list.raw = list.raw.substring(0, list.raw.length - addBack);
+            i = l - 1;
+          }
+          bcurr = bnext;
+        }
+
         // Remove the list item's bullet
         // so it is seen as the next token.
         space = item.length;
-        item = item.replace(/^ *([*+-]|\d+[.)]) */, '');
+        item = item.replace(/^ *([*+-]|\d+[.)]) ?/, '');
 
         // Outdent whatever the
         // list item contains. Hacky.
@@ -56873,24 +57395,18 @@ module.exports = class Tokenizer {
             : item.replace(/^ {1,4}/gm, '');
         }
 
-        // Determine whether the next list item belongs here.
-        // Backpedal if it does not belong in this list.
+        // trim item newlines at end
+        item = rtrim(item, '\n');
         if (i !== l - 1) {
-          b = this.rules.block.bullet.exec(itemMatch[i + 1])[0];
-          if (isordered ? b.length === 1 || (!isparen && b[b.length - 1] === ')')
-            : (b.length > 1 || (this.options.smartLists && b !== bull))) {
-            addBack = itemMatch.slice(i + 1).join('\n');
-            list.raw = list.raw.substring(0, list.raw.length - addBack.length);
-            i = l - 1;
-          }
+          raw = raw + '\n';
         }
 
         // Determine whether item is loose or not.
         // Use: /(^|\n)(?! )[^\n]+\n\n(?!\s*$)/
         // for discount behavior.
-        loose = next || /\n\n(?!\s*$)/.test(item);
+        loose = next || /\n\n(?!\s*$)/.test(raw);
         if (i !== l - 1) {
-          next = item.charAt(item.length - 1) === '\n';
+          next = raw.slice(-2) === '\n\n';
           if (!loose) loose = next;
         }
 
@@ -56899,11 +57415,13 @@ module.exports = class Tokenizer {
         }
 
         // Check for task list items
-        istask = /^\[[ xX]\] /.test(item);
-        ischecked = undefined;
-        if (istask) {
-          ischecked = item[1] !== ' ';
-          item = item.replace(/^\[[ xX]\] +/, '');
+        if (this.options.gfm) {
+          istask = /^\[[ xX]\] /.test(item);
+          ischecked = undefined;
+          if (istask) {
+            ischecked = item[1] !== ' ';
+            item = item.replace(/^\[[ xX]\] +/, '');
+          }
         }
 
         list.items.push({
@@ -56941,6 +57459,7 @@ module.exports = class Tokenizer {
       if (cap[3]) cap[3] = cap[3].substring(1, cap[3].length - 1);
       const tag = cap[1].toLowerCase().replace(/\s+/g, ' ');
       return {
+        type: 'def',
         tag,
         raw: cap[0],
         href: cap[2],
@@ -57013,17 +57532,9 @@ module.exports = class Tokenizer {
     }
   }
 
-  text(src, tokens) {
+  text(src) {
     const cap = this.rules.block.text.exec(src);
     if (cap) {
-      const lastToken = tokens[tokens.length - 1];
-      if (lastToken && lastToken.type === 'text') {
-        return {
-          raw: cap[0],
-          text: cap[0]
-        };
-      }
-
       return {
         type: 'text',
         raw: cap[0],
@@ -57076,34 +57587,56 @@ module.exports = class Tokenizer {
   link(src) {
     const cap = this.rules.inline.link.exec(src);
     if (cap) {
-      const lastParenIndex = findClosingBracket(cap[2], '()');
-      if (lastParenIndex > -1) {
-        const start = cap[0].indexOf('!') === 0 ? 5 : 4;
-        const linkLen = start + cap[1].length + lastParenIndex;
-        cap[2] = cap[2].substring(0, lastParenIndex);
-        cap[0] = cap[0].substring(0, linkLen).trim();
-        cap[3] = '';
+      const trimmedUrl = cap[2].trim();
+      if (!this.options.pedantic && /^</.test(trimmedUrl)) {
+        // commonmark requires matching angle brackets
+        if (!(/>$/.test(trimmedUrl))) {
+          return;
+        }
+
+        // ending angle bracket cannot be escaped
+        const rtrimSlash = rtrim(trimmedUrl.slice(0, -1), '\\');
+        if ((trimmedUrl.length - rtrimSlash.length) % 2 === 0) {
+          return;
+        }
+      } else {
+        // find closing parenthesis
+        const lastParenIndex = findClosingBracket(cap[2], '()');
+        if (lastParenIndex > -1) {
+          const start = cap[0].indexOf('!') === 0 ? 5 : 4;
+          const linkLen = start + cap[1].length + lastParenIndex;
+          cap[2] = cap[2].substring(0, lastParenIndex);
+          cap[0] = cap[0].substring(0, linkLen).trim();
+          cap[3] = '';
+        }
       }
       let href = cap[2];
       let title = '';
       if (this.options.pedantic) {
+        // split pedantic href and title
         const link = /^([^'"]*[^\s])\s+(['"])(.*)\2/.exec(href);
 
         if (link) {
           href = link[1];
           title = link[3];
-        } else {
-          title = '';
         }
       } else {
         title = cap[3] ? cap[3].slice(1, -1) : '';
       }
-      href = href.trim().replace(/^<([\s\S]*)>$/, '$1');
-      const token = outputLink(cap, {
+
+      href = href.trim();
+      if (/^</.test(href)) {
+        if (this.options.pedantic && !(/>$/.test(trimmedUrl))) {
+          // pedantic allows starting angle bracket without ending angle bracket
+          href = href.slice(1);
+        } else {
+          href = href.slice(1, -1);
+        }
+      }
+      return outputLink(cap, {
         href: href ? href.replace(this.rules.inline._escapes, '$1') : href,
         title: title ? title.replace(this.rules.inline._escapes, '$1') : title
       }, cap[0]);
-      return token;
     }
   }
 
@@ -57121,51 +57654,65 @@ module.exports = class Tokenizer {
           text
         };
       }
-      const token = outputLink(cap, link, cap[0]);
-      return token;
+      return outputLink(cap, link, cap[0]);
     }
   }
 
-  strong(src, maskedSrc, prevChar = '') {
-    let match = this.rules.inline.strong.start.exec(src);
+  emStrong(src, maskedSrc, prevChar = '') {
+    let match = this.rules.inline.emStrong.lDelim.exec(src);
+    if (!match) return;
 
-    if (match && (!match[1] || (match[1] && (prevChar === '' || this.rules.inline.punctuation.exec(prevChar))))) {
-      maskedSrc = maskedSrc.slice(-1 * src.length);
-      const endReg = match[0] === '**' ? this.rules.inline.strong.endAst : this.rules.inline.strong.endUnd;
+    if (match[3] && prevChar.match(/[\p{L}\p{N}]/u)) return; // _ can't be between two alphanumerics. \p{L}\p{N} includes non-english alphabet/numbers as well
 
+    const nextChar = match[1] || match[2] || '';
+
+    if (!nextChar || (nextChar && (prevChar === '' || this.rules.inline.punctuation.exec(prevChar)))) {
+      const lLength = match[0].length - 1;
+      let rDelim, rLength, delimTotal = lLength, midDelimTotal = 0;
+
+      const endReg = match[0][0] === '*' ? this.rules.inline.emStrong.rDelimAst : this.rules.inline.emStrong.rDelimUnd;
       endReg.lastIndex = 0;
 
-      let cap;
+      maskedSrc = maskedSrc.slice(-1 * src.length + lLength); // Bump maskedSrc to same section of string as src (move to lexer?)
+
       while ((match = endReg.exec(maskedSrc)) != null) {
-        cap = this.rules.inline.strong.middle.exec(maskedSrc.slice(0, match.index + 3));
-        if (cap) {
-          return {
-            type: 'strong',
-            raw: src.slice(0, cap[0].length),
-            text: src.slice(2, cap[0].length - 2)
-          };
+        rDelim = match[1] || match[2] || match[3] || match[4] || match[5] || match[6];
+
+        if (!rDelim) continue; // matched the first alternative in rules.js (skip the * in __abc*abc__)
+
+        rLength = rDelim.length;
+
+        if (match[3] || match[4]) { // found another Left Delim
+          delimTotal += rLength;
+          continue;
+        } else if (match[5] || match[6]) { // either Left or Right Delim
+          if (lLength % 3 && !((lLength + rLength) % 3)) {
+            midDelimTotal += rLength;
+            continue; // CommonMark Emphasis Rules 9-10
+          }
         }
-      }
-    }
-  }
 
-  em(src, maskedSrc, prevChar = '') {
-    let match = this.rules.inline.em.start.exec(src);
+        delimTotal -= rLength;
 
-    if (match && (!match[1] || (match[1] && (prevChar === '' || this.rules.inline.punctuation.exec(prevChar))))) {
-      maskedSrc = maskedSrc.slice(-1 * src.length);
-      const endReg = match[0] === '*' ? this.rules.inline.em.endAst : this.rules.inline.em.endUnd;
+        if (delimTotal > 0) continue; // Haven't found enough closing delimiters
 
-      endReg.lastIndex = 0;
+        // If this is the last rDelimiter, remove extra characters. *a*** -> *a*
+        if (delimTotal + midDelimTotal - rLength <= 0 && !maskedSrc.slice(endReg.lastIndex).match(endReg)) {
+          rLength = Math.min(rLength, rLength + delimTotal + midDelimTotal);
+        }
 
-      let cap;
-      while ((match = endReg.exec(maskedSrc)) != null) {
-        cap = this.rules.inline.em.middle.exec(maskedSrc.slice(0, match.index + 2));
-        if (cap) {
+        if (Math.min(lLength, rLength) % 2) {
           return {
             type: 'em',
-            raw: src.slice(0, cap[0].length),
-            text: src.slice(1, cap[0].length - 1)
+            raw: src.slice(0, lLength + match.index + rLength + 1),
+            text: src.slice(1, lLength + match.index + rLength)
+          };
+        }
+        if (Math.min(lLength, rLength) % 2 === 0) {
+          return {
+            type: 'strong',
+            raw: src.slice(0, lLength + match.index + rLength + 1),
+            text: src.slice(2, lLength + match.index + rLength - 1)
           };
         }
       }
@@ -57177,7 +57724,7 @@ module.exports = class Tokenizer {
     if (cap) {
       let text = cap[2].replace(/\n/g, ' ');
       const hasNonSpaceChars = /[^ ]/.test(text);
-      const hasSpaceCharsOnBothEnds = text.startsWith(' ') && text.endsWith(' ');
+      const hasSpaceCharsOnBothEnds = /^ /.test(text) && / $/.test(text);
       if (hasNonSpaceChars && hasSpaceCharsOnBothEnds) {
         text = text.substring(1, text.length - 1);
       }
@@ -57206,7 +57753,7 @@ module.exports = class Tokenizer {
       return {
         type: 'del',
         raw: cap[0],
-        text: cap[1]
+        text: cap[2]
       };
     }
   }
@@ -57313,7 +57860,7 @@ if (process.env.READABLE_STREAM === 'disable' && Stream) {
   exports = module.exports = __webpack_require__(226);
   exports.Stream = Stream || exports;
   exports.Readable = exports;
-  exports.Writable = __webpack_require__(27);
+  exports.Writable = __webpack_require__(241);
   exports.Duplex = __webpack_require__(831);
   exports.Transform = __webpack_require__(528);
   exports.PassThrough = __webpack_require__(882);
@@ -57917,6 +58464,25 @@ function patch (fs) {
     }
   }
 
+  var fs$copyFile = fs.copyFile
+  if (fs$copyFile)
+    fs.copyFile = copyFile
+  function copyFile (src, dest, flags, cb) {
+    if (typeof flags === 'function') {
+      cb = flags
+      flags = 0
+    }
+    return fs$copyFile(src, dest, flags, function (err) {
+      if (err && (err.code === 'EMFILE' || err.code === 'ENFILE'))
+        enqueue([fs$copyFile, [src, dest, flags, cb]])
+      else {
+        if (typeof cb === 'function')
+          cb.apply(this, arguments)
+        retry()
+      }
+    })
+  }
+
   var fs$readdir = fs.readdir
   fs.readdir = readdir
   function readdir (path, options, cb) {
@@ -58107,62 +58673,161 @@ function retry () {
 
 "use strict";
 
-const pTry = __webpack_require__(785);
+var gitHosts = __webpack_require__(317)
+/* eslint-disable node/no-deprecated-api */
 
-const pLimit = concurrency => {
-	if (!((Number.isInteger(concurrency) || concurrency === Infinity) && concurrency > 0)) {
-		return Promise.reject(new TypeError('Expected `concurrency` to be a number from 1 and up'));
-	}
+// copy-pasta util._extend from node's source, to avoid pulling
+// the whole util module into peoples' webpack bundles.
+/* istanbul ignore next */
+var extend = Object.assign || function _extend (target, source) {
+  // Don't do anything if source isn't an object
+  if (source === null || typeof source !== 'object') return target
 
-	const queue = [];
-	let activeCount = 0;
+  var keys = Object.keys(source)
+  var i = keys.length
+  while (i--) {
+    target[keys[i]] = source[keys[i]]
+  }
+  return target
+}
 
-	const next = () => {
-		activeCount--;
+module.exports = GitHost
+function GitHost (type, user, auth, project, committish, defaultRepresentation, opts) {
+  var gitHostInfo = this
+  gitHostInfo.type = type
+  Object.keys(gitHosts[type]).forEach(function (key) {
+    gitHostInfo[key] = gitHosts[type][key]
+  })
+  gitHostInfo.user = user
+  gitHostInfo.auth = auth
+  gitHostInfo.project = project
+  gitHostInfo.committish = committish
+  gitHostInfo.default = defaultRepresentation
+  gitHostInfo.opts = opts || {}
+}
 
-		if (queue.length > 0) {
-			queue.shift()();
-		}
-	};
+GitHost.prototype.hash = function () {
+  return this.committish ? '#' + this.committish : ''
+}
 
-	const run = (fn, resolve, ...args) => {
-		activeCount++;
+GitHost.prototype._fill = function (template, opts) {
+  if (!template) return
+  var vars = extend({}, opts)
+  vars.path = vars.path ? vars.path.replace(/^[/]+/g, '') : ''
+  opts = extend(extend({}, this.opts), opts)
+  var self = this
+  Object.keys(this).forEach(function (key) {
+    if (self[key] != null && vars[key] == null) vars[key] = self[key]
+  })
+  var rawAuth = vars.auth
+  var rawcommittish = vars.committish
+  var rawFragment = vars.fragment
+  var rawPath = vars.path
+  var rawProject = vars.project
+  Object.keys(vars).forEach(function (key) {
+    var value = vars[key]
+    if ((key === 'path' || key === 'project') && typeof value === 'string') {
+      vars[key] = value.split('/').map(function (pathComponent) {
+        return encodeURIComponent(pathComponent)
+      }).join('/')
+    } else {
+      vars[key] = encodeURIComponent(value)
+    }
+  })
+  vars['auth@'] = rawAuth ? rawAuth + '@' : ''
+  vars['#fragment'] = rawFragment ? '#' + this.hashformat(rawFragment) : ''
+  vars.fragment = vars.fragment ? vars.fragment : ''
+  vars['#path'] = rawPath ? '#' + this.hashformat(rawPath) : ''
+  vars['/path'] = vars.path ? '/' + vars.path : ''
+  vars.projectPath = rawProject.split('/').map(encodeURIComponent).join('/')
+  if (opts.noCommittish) {
+    vars['#committish'] = ''
+    vars['/tree/committish'] = ''
+    vars['/committish'] = ''
+    vars.committish = ''
+  } else {
+    vars['#committish'] = rawcommittish ? '#' + rawcommittish : ''
+    vars['/tree/committish'] = vars.committish
+      ? '/' + vars.treepath + '/' + vars.committish
+      : ''
+    vars['/committish'] = vars.committish ? '/' + vars.committish : ''
+    vars.committish = vars.committish || 'master'
+  }
+  var res = template
+  Object.keys(vars).forEach(function (key) {
+    res = res.replace(new RegExp('[{]' + key + '[}]', 'g'), vars[key])
+  })
+  if (opts.noGitPlus) {
+    return res.replace(/^git[+]/, '')
+  } else {
+    return res
+  }
+}
 
-		const result = pTry(fn, ...args);
+GitHost.prototype.ssh = function (opts) {
+  return this._fill(this.sshtemplate, opts)
+}
 
-		resolve(result);
+GitHost.prototype.sshurl = function (opts) {
+  return this._fill(this.sshurltemplate, opts)
+}
 
-		result.then(next, next);
-	};
+GitHost.prototype.browse = function (P, F, opts) {
+  if (typeof P === 'string') {
+    if (typeof F !== 'string') {
+      opts = F
+      F = null
+    }
+    return this._fill(this.browsefiletemplate, extend({
+      fragment: F,
+      path: P
+    }, opts))
+  } else {
+    return this._fill(this.browsetemplate, P)
+  }
+}
 
-	const enqueue = (fn, resolve, ...args) => {
-		if (activeCount < concurrency) {
-			run(fn, resolve, ...args);
-		} else {
-			queue.push(run.bind(null, fn, resolve, ...args));
-		}
-	};
+GitHost.prototype.docs = function (opts) {
+  return this._fill(this.docstemplate, opts)
+}
 
-	const generator = (fn, ...args) => new Promise(resolve => enqueue(fn, resolve, ...args));
-	Object.defineProperties(generator, {
-		activeCount: {
-			get: () => activeCount
-		},
-		pendingCount: {
-			get: () => queue.length
-		},
-		clearQueue: {
-			value: () => {
-				queue.length = 0;
-			}
-		}
-	});
+GitHost.prototype.bugs = function (opts) {
+  return this._fill(this.bugstemplate, opts)
+}
 
-	return generator;
-};
+GitHost.prototype.https = function (opts) {
+  return this._fill(this.httpstemplate, opts)
+}
 
-module.exports = pLimit;
-module.exports.default = pLimit;
+GitHost.prototype.git = function (opts) {
+  return this._fill(this.gittemplate, opts)
+}
+
+GitHost.prototype.shortcut = function (opts) {
+  return this._fill(this.shortcuttemplate, opts)
+}
+
+GitHost.prototype.path = function (opts) {
+  return this._fill(this.pathtemplate, opts)
+}
+
+GitHost.prototype.tarball = function (opts_) {
+  var opts = extend({}, opts_, { noCommittish: false })
+  return this._fill(this.tarballtemplate, opts)
+}
+
+GitHost.prototype.file = function (P, opts) {
+  return this._fill(this.filetemplate, extend({ path: P }, opts))
+}
+
+GitHost.prototype.getDefaultRepresentation = function () {
+  return this.default
+}
+
+GitHost.prototype.toString = function (opts) {
+  if (this.default && typeof this[this.default] === 'function') return this[this.default](opts)
+  return this.sshurl(opts)
+}
 
 
 /***/ }),
@@ -59021,7 +59686,147 @@ convert.rgb.gray = function (rgb) {
 module.exports = require("http");
 
 /***/ }),
-/* 606 */,
+/* 606 */
+/***/ (function(module) {
+
+"use strict";
+
+const TEMPLATE_REGEX = /(?:\\(u(?:[a-f\d]{4}|\{[a-f\d]{1,6}\})|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
+const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
+const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
+const ESCAPE_REGEX = /\\(u(?:[a-f\d]{4}|{[a-f\d]{1,6}})|x[a-f\d]{2}|.)|([^\\])/gi;
+
+const ESCAPES = new Map([
+	['n', '\n'],
+	['r', '\r'],
+	['t', '\t'],
+	['b', '\b'],
+	['f', '\f'],
+	['v', '\v'],
+	['0', '\0'],
+	['\\', '\\'],
+	['e', '\u001B'],
+	['a', '\u0007']
+]);
+
+function unescape(c) {
+	const u = c[0] === 'u';
+	const bracket = c[1] === '{';
+
+	if ((u && !bracket && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
+		return String.fromCharCode(parseInt(c.slice(1), 16));
+	}
+
+	if (u && bracket) {
+		return String.fromCodePoint(parseInt(c.slice(2, -1), 16));
+	}
+
+	return ESCAPES.get(c) || c;
+}
+
+function parseArguments(name, arguments_) {
+	const results = [];
+	const chunks = arguments_.trim().split(/\s*,\s*/g);
+	let matches;
+
+	for (const chunk of chunks) {
+		const number = Number(chunk);
+		if (!Number.isNaN(number)) {
+			results.push(number);
+		} else if ((matches = chunk.match(STRING_REGEX))) {
+			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, character) => escape ? unescape(escape) : character));
+		} else {
+			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
+		}
+	}
+
+	return results;
+}
+
+function parseStyle(style) {
+	STYLE_REGEX.lastIndex = 0;
+
+	const results = [];
+	let matches;
+
+	while ((matches = STYLE_REGEX.exec(style)) !== null) {
+		const name = matches[1];
+
+		if (matches[2]) {
+			const args = parseArguments(name, matches[2]);
+			results.push([name].concat(args));
+		} else {
+			results.push([name]);
+		}
+	}
+
+	return results;
+}
+
+function buildStyle(chalk, styles) {
+	const enabled = {};
+
+	for (const layer of styles) {
+		for (const style of layer.styles) {
+			enabled[style[0]] = layer.inverse ? null : style.slice(1);
+		}
+	}
+
+	let current = chalk;
+	for (const [styleName, styles] of Object.entries(enabled)) {
+		if (!Array.isArray(styles)) {
+			continue;
+		}
+
+		if (!(styleName in current)) {
+			throw new Error(`Unknown Chalk style: ${styleName}`);
+		}
+
+		current = styles.length > 0 ? current[styleName](...styles) : current[styleName];
+	}
+
+	return current;
+}
+
+module.exports = (chalk, temporary) => {
+	const styles = [];
+	const chunks = [];
+	let chunk = [];
+
+	// eslint-disable-next-line max-params
+	temporary.replace(TEMPLATE_REGEX, (m, escapeCharacter, inverse, style, close, character) => {
+		if (escapeCharacter) {
+			chunk.push(unescape(escapeCharacter));
+		} else if (style) {
+			const string = chunk.join('');
+			chunk = [];
+			chunks.push(styles.length === 0 ? string : buildStyle(chalk, styles)(string));
+			styles.push({inverse, styles: parseStyle(style)});
+		} else if (close) {
+			if (styles.length === 0) {
+				throw new Error('Found extraneous } in Chalk template literal');
+			}
+
+			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
+			chunk = [];
+			styles.pop();
+		} else {
+			chunk.push(character);
+		}
+	});
+
+	chunks.push(chunk.join(''));
+
+	if (styles.length > 0) {
+		const errMessage = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
+		throw new Error(errMessage);
+	}
+
+	return chunks.join('');
+};
+
+
+/***/ }),
 /* 607 */,
 /* 608 */
 /***/ (function(module) {
@@ -59031,12 +59836,16 @@ module.exports = require("http");
 
 module.exports = clone
 
+var getPrototypeOf = Object.getPrototypeOf || function (obj) {
+  return obj.__proto__
+}
+
 function clone (obj) {
   if (obj === null || typeof obj !== 'object')
     return obj
 
   if (obj instanceof Object)
-    var copy = { __proto__: obj.__proto__ }
+    var copy = { __proto__: getPrototypeOf(obj) }
   else
     var copy = Object.create(null)
 
@@ -59091,146 +59900,431 @@ module.exports.default = pReduce;
 
 "use strict";
 
+module.exports = Yallist
 
-var util = __webpack_require__(669);
-var isArrayish = __webpack_require__(156);
+Yallist.Node = Node
+Yallist.create = Yallist
 
-var errorEx = function errorEx(name, properties) {
-	if (!name || name.constructor !== String) {
-		properties = name || {};
-		name = Error.name;
-	}
+function Yallist (list) {
+  var self = this
+  if (!(self instanceof Yallist)) {
+    self = new Yallist()
+  }
 
-	var errorExError = function ErrorEXError(message) {
-		if (!this) {
-			return new ErrorEXError(message);
-		}
+  self.tail = null
+  self.head = null
+  self.length = 0
 
-		message = message instanceof Error
-			? message.message
-			: (message || this.message);
+  if (list && typeof list.forEach === 'function') {
+    list.forEach(function (item) {
+      self.push(item)
+    })
+  } else if (arguments.length > 0) {
+    for (var i = 0, l = arguments.length; i < l; i++) {
+      self.push(arguments[i])
+    }
+  }
 
-		Error.call(this, message);
-		Error.captureStackTrace(this, errorExError);
+  return self
+}
 
-		this.name = name;
+Yallist.prototype.removeNode = function (node) {
+  if (node.list !== this) {
+    throw new Error('removing node which does not belong to this list')
+  }
 
-		Object.defineProperty(this, 'message', {
-			configurable: true,
-			enumerable: false,
-			get: function () {
-				var newMessage = message.split(/\r?\n/g);
+  var next = node.next
+  var prev = node.prev
 
-				for (var key in properties) {
-					if (!properties.hasOwnProperty(key)) {
-						continue;
-					}
+  if (next) {
+    next.prev = prev
+  }
 
-					var modifier = properties[key];
+  if (prev) {
+    prev.next = next
+  }
 
-					if ('message' in modifier) {
-						newMessage = modifier.message(this[key], newMessage) || newMessage;
-						if (!isArrayish(newMessage)) {
-							newMessage = [newMessage];
-						}
-					}
-				}
+  if (node === this.head) {
+    this.head = next
+  }
+  if (node === this.tail) {
+    this.tail = prev
+  }
 
-				return newMessage.join('\n');
-			},
-			set: function (v) {
-				message = v;
-			}
-		});
+  node.list.length--
+  node.next = null
+  node.prev = null
+  node.list = null
 
-		var overwrittenStack = null;
+  return next
+}
 
-		var stackDescriptor = Object.getOwnPropertyDescriptor(this, 'stack');
-		var stackGetter = stackDescriptor.get;
-		var stackValue = stackDescriptor.value;
-		delete stackDescriptor.value;
-		delete stackDescriptor.writable;
+Yallist.prototype.unshiftNode = function (node) {
+  if (node === this.head) {
+    return
+  }
 
-		stackDescriptor.set = function (newstack) {
-			overwrittenStack = newstack;
-		};
+  if (node.list) {
+    node.list.removeNode(node)
+  }
 
-		stackDescriptor.get = function () {
-			var stack = (overwrittenStack || ((stackGetter)
-				? stackGetter.call(this)
-				: stackValue)).split(/\r?\n+/g);
+  var head = this.head
+  node.list = this
+  node.next = head
+  if (head) {
+    head.prev = node
+  }
 
-			// starting in Node 7, the stack builder caches the message.
-			// just replace it.
-			if (!overwrittenStack) {
-				stack[0] = this.name + ': ' + this.message;
-			}
+  this.head = node
+  if (!this.tail) {
+    this.tail = node
+  }
+  this.length++
+}
 
-			var lineCount = 1;
-			for (var key in properties) {
-				if (!properties.hasOwnProperty(key)) {
-					continue;
-				}
+Yallist.prototype.pushNode = function (node) {
+  if (node === this.tail) {
+    return
+  }
 
-				var modifier = properties[key];
+  if (node.list) {
+    node.list.removeNode(node)
+  }
 
-				if ('line' in modifier) {
-					var line = modifier.line(this[key]);
-					if (line) {
-						stack.splice(lineCount++, 0, '    ' + line);
-					}
-				}
+  var tail = this.tail
+  node.list = this
+  node.prev = tail
+  if (tail) {
+    tail.next = node
+  }
 
-				if ('stack' in modifier) {
-					modifier.stack(this[key], stack);
-				}
-			}
+  this.tail = node
+  if (!this.head) {
+    this.head = node
+  }
+  this.length++
+}
 
-			return stack.join('\n');
-		};
+Yallist.prototype.push = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    push(this, arguments[i])
+  }
+  return this.length
+}
 
-		Object.defineProperty(this, 'stack', stackDescriptor);
-	};
+Yallist.prototype.unshift = function () {
+  for (var i = 0, l = arguments.length; i < l; i++) {
+    unshift(this, arguments[i])
+  }
+  return this.length
+}
 
-	if (Object.setPrototypeOf) {
-		Object.setPrototypeOf(errorExError.prototype, Error.prototype);
-		Object.setPrototypeOf(errorExError, Error);
-	} else {
-		util.inherits(errorExError, Error);
-	}
+Yallist.prototype.pop = function () {
+  if (!this.tail) {
+    return undefined
+  }
 
-	return errorExError;
-};
+  var res = this.tail.value
+  this.tail = this.tail.prev
+  if (this.tail) {
+    this.tail.next = null
+  } else {
+    this.head = null
+  }
+  this.length--
+  return res
+}
 
-errorEx.append = function (str, def) {
-	return {
-		message: function (v, message) {
-			v = v || def;
+Yallist.prototype.shift = function () {
+  if (!this.head) {
+    return undefined
+  }
 
-			if (v) {
-				message[0] += ' ' + str.replace('%s', v.toString());
-			}
+  var res = this.head.value
+  this.head = this.head.next
+  if (this.head) {
+    this.head.prev = null
+  } else {
+    this.tail = null
+  }
+  this.length--
+  return res
+}
 
-			return message;
-		}
-	};
-};
+Yallist.prototype.forEach = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.head, i = 0; walker !== null; i++) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.next
+  }
+}
 
-errorEx.line = function (str, def) {
-	return {
-		line: function (v) {
-			v = v || def;
+Yallist.prototype.forEachReverse = function (fn, thisp) {
+  thisp = thisp || this
+  for (var walker = this.tail, i = this.length - 1; walker !== null; i--) {
+    fn.call(thisp, walker.value, i, this)
+    walker = walker.prev
+  }
+}
 
-			if (v) {
-				return str.replace('%s', v.toString());
-			}
+Yallist.prototype.get = function (n) {
+  for (var i = 0, walker = this.head; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.next
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
 
-			return null;
-		}
-	};
-};
+Yallist.prototype.getReverse = function (n) {
+  for (var i = 0, walker = this.tail; walker !== null && i < n; i++) {
+    // abort out of the list early if we hit a cycle
+    walker = walker.prev
+  }
+  if (i === n && walker !== null) {
+    return walker.value
+  }
+}
 
-module.exports = errorEx;
+Yallist.prototype.map = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.head; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.next
+  }
+  return res
+}
+
+Yallist.prototype.mapReverse = function (fn, thisp) {
+  thisp = thisp || this
+  var res = new Yallist()
+  for (var walker = this.tail; walker !== null;) {
+    res.push(fn.call(thisp, walker.value, this))
+    walker = walker.prev
+  }
+  return res
+}
+
+Yallist.prototype.reduce = function (fn, initial) {
+  var acc
+  var walker = this.head
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.head) {
+    walker = this.head.next
+    acc = this.head.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = 0; walker !== null; i++) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.next
+  }
+
+  return acc
+}
+
+Yallist.prototype.reduceReverse = function (fn, initial) {
+  var acc
+  var walker = this.tail
+  if (arguments.length > 1) {
+    acc = initial
+  } else if (this.tail) {
+    walker = this.tail.prev
+    acc = this.tail.value
+  } else {
+    throw new TypeError('Reduce of empty list with no initial value')
+  }
+
+  for (var i = this.length - 1; walker !== null; i--) {
+    acc = fn(acc, walker.value, i)
+    walker = walker.prev
+  }
+
+  return acc
+}
+
+Yallist.prototype.toArray = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.head; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.next
+  }
+  return arr
+}
+
+Yallist.prototype.toArrayReverse = function () {
+  var arr = new Array(this.length)
+  for (var i = 0, walker = this.tail; walker !== null; i++) {
+    arr[i] = walker.value
+    walker = walker.prev
+  }
+  return arr
+}
+
+Yallist.prototype.slice = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = 0, walker = this.head; walker !== null && i < from; i++) {
+    walker = walker.next
+  }
+  for (; walker !== null && i < to; i++, walker = walker.next) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.sliceReverse = function (from, to) {
+  to = to || this.length
+  if (to < 0) {
+    to += this.length
+  }
+  from = from || 0
+  if (from < 0) {
+    from += this.length
+  }
+  var ret = new Yallist()
+  if (to < from || to < 0) {
+    return ret
+  }
+  if (from < 0) {
+    from = 0
+  }
+  if (to > this.length) {
+    to = this.length
+  }
+  for (var i = this.length, walker = this.tail; walker !== null && i > to; i--) {
+    walker = walker.prev
+  }
+  for (; walker !== null && i > from; i--, walker = walker.prev) {
+    ret.push(walker.value)
+  }
+  return ret
+}
+
+Yallist.prototype.splice = function (start, deleteCount, ...nodes) {
+  if (start > this.length) {
+    start = this.length - 1
+  }
+  if (start < 0) {
+    start = this.length + start;
+  }
+
+  for (var i = 0, walker = this.head; walker !== null && i < start; i++) {
+    walker = walker.next
+  }
+
+  var ret = []
+  for (var i = 0; walker && i < deleteCount; i++) {
+    ret.push(walker.value)
+    walker = this.removeNode(walker)
+  }
+  if (walker === null) {
+    walker = this.tail
+  }
+
+  if (walker !== this.head && walker !== this.tail) {
+    walker = walker.prev
+  }
+
+  for (var i = 0; i < nodes.length; i++) {
+    walker = insert(this, walker, nodes[i])
+  }
+  return ret;
+}
+
+Yallist.prototype.reverse = function () {
+  var head = this.head
+  var tail = this.tail
+  for (var walker = head; walker !== null; walker = walker.prev) {
+    var p = walker.prev
+    walker.prev = walker.next
+    walker.next = p
+  }
+  this.head = tail
+  this.tail = head
+  return this
+}
+
+function insert (self, node, value) {
+  var inserted = node === self.head ?
+    new Node(value, null, node, self) :
+    new Node(value, node, node.next, self)
+
+  if (inserted.next === null) {
+    self.tail = inserted
+  }
+  if (inserted.prev === null) {
+    self.head = inserted
+  }
+
+  self.length++
+
+  return inserted
+}
+
+function push (self, item) {
+  self.tail = new Node(item, self.tail, null, self)
+  if (!self.head) {
+    self.head = self.tail
+  }
+  self.length++
+}
+
+function unshift (self, item) {
+  self.head = new Node(item, null, self.head, self)
+  if (!self.tail) {
+    self.tail = self.head
+  }
+  self.length++
+}
+
+function Node (value, prev, next, list) {
+  if (!(this instanceof Node)) {
+    return new Node(value, prev, next, list)
+  }
+
+  this.list = list
+  this.value = value
+
+  if (prev) {
+    prev.next = this
+    this.prev = prev
+  } else {
+    this.prev = null
+  }
+
+  if (next) {
+    next.prev = this
+    this.next = next
+  } else {
+    this.next = null
+  }
+}
+
+try {
+  // add if support for Symbol.iterator is present
+  __webpack_require__(396)(Yallist)
+} catch (er) {}
 
 
 /***/ }),
@@ -59423,7 +60517,7 @@ var isBuiltinModule = __webpack_require__(977).isCore
 var depTypes = ["dependencies","devDependencies","optionalDependencies"]
 var extractDescription = __webpack_require__(155)
 var url = __webpack_require__(835)
-var typos = __webpack_require__(447)
+var typos = __webpack_require__(366)
 
 var fixer = module.exports = {
   // default warning function
@@ -59939,430 +61033,66 @@ module.exports = require("path");
 /***/ }),
 /* 623 */,
 /* 624 */,
-/* 625 */,
-/* 626 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/* 625 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
+const {PassThrough: PassThroughStream} = __webpack_require__(794);
 
-var PlainValue = __webpack_require__(513);
-var resolveSeq = __webpack_require__(232);
+module.exports = options => {
+	options = {...options};
 
-/* global atob, btoa, Buffer */
-const binary = {
-  identify: value => value instanceof Uint8Array,
-  // Buffer inherits from Uint8Array
-  default: false,
-  tag: 'tag:yaml.org,2002:binary',
+	const {array} = options;
+	let {encoding} = options;
+	const isBuffer = encoding === 'buffer';
+	let objectMode = false;
 
-  /**
-   * Returns a Buffer in node and an Uint8Array in browsers
-   *
-   * To use the resulting buffer as an image, you'll want to do something like:
-   *
-   *   const blob = new Blob([buffer], { type: 'image/jpeg' })
-   *   document.querySelector('#photo').src = URL.createObjectURL(blob)
-   */
-  resolve: (doc, node) => {
-    const src = resolveSeq.resolveString(doc, node);
+	if (array) {
+		objectMode = !(encoding || isBuffer);
+	} else {
+		encoding = encoding || 'utf8';
+	}
 
-    if (typeof Buffer === 'function') {
-      return Buffer.from(src, 'base64');
-    } else if (typeof atob === 'function') {
-      // On IE 11, atob() can't handle newlines
-      const str = atob(src.replace(/[\n\r]/g, ''));
-      const buffer = new Uint8Array(str.length);
+	if (isBuffer) {
+		encoding = null;
+	}
 
-      for (let i = 0; i < str.length; ++i) buffer[i] = str.charCodeAt(i);
+	const stream = new PassThroughStream({objectMode});
 
-      return buffer;
-    } else {
-      const msg = 'This environment does not support reading binary tags; either Buffer or atob is required';
-      doc.errors.push(new PlainValue.YAMLReferenceError(node, msg));
-      return null;
-    }
-  },
-  options: resolveSeq.binaryOptions,
-  stringify: ({
-    comment,
-    type,
-    value
-  }, ctx, onComment, onChompKeep) => {
-    let src;
+	if (encoding) {
+		stream.setEncoding(encoding);
+	}
 
-    if (typeof Buffer === 'function') {
-      src = value instanceof Buffer ? value.toString('base64') : Buffer.from(value.buffer).toString('base64');
-    } else if (typeof btoa === 'function') {
-      let s = '';
+	let length = 0;
+	const chunks = [];
 
-      for (let i = 0; i < value.length; ++i) s += String.fromCharCode(value[i]);
+	stream.on('data', chunk => {
+		chunks.push(chunk);
 
-      src = btoa(s);
-    } else {
-      throw new Error('This environment does not support writing binary tags; either Buffer or btoa is required');
-    }
+		if (objectMode) {
+			length = chunks.length;
+		} else {
+			length += chunk.length;
+		}
+	});
 
-    if (!type) type = resolveSeq.binaryOptions.defaultType;
+	stream.getBufferedValue = () => {
+		if (array) {
+			return chunks;
+		}
 
-    if (type === PlainValue.Type.QUOTE_DOUBLE) {
-      value = src;
-    } else {
-      const {
-        lineWidth
-      } = resolveSeq.binaryOptions;
-      const n = Math.ceil(src.length / lineWidth);
-      const lines = new Array(n);
+		return isBuffer ? Buffer.concat(chunks, length) : chunks.join('');
+	};
 
-      for (let i = 0, o = 0; i < n; ++i, o += lineWidth) {
-        lines[i] = src.substr(o, lineWidth);
-      }
+	stream.getBufferedLength = () => length;
 
-      value = lines.join(type === PlainValue.Type.BLOCK_LITERAL ? '\n' : ' ');
-    }
-
-    return resolveSeq.stringifyString({
-      comment,
-      type,
-      value
-    }, ctx, onComment, onChompKeep);
-  }
+	return stream;
 };
-
-function parsePairs(doc, cst) {
-  const seq = resolveSeq.resolveSeq(doc, cst);
-
-  for (let i = 0; i < seq.items.length; ++i) {
-    let item = seq.items[i];
-    if (item instanceof resolveSeq.Pair) continue;else if (item instanceof resolveSeq.YAMLMap) {
-      if (item.items.length > 1) {
-        const msg = 'Each pair must have its own sequence indicator';
-        throw new PlainValue.YAMLSemanticError(cst, msg);
-      }
-
-      const pair = item.items[0] || new resolveSeq.Pair();
-      if (item.commentBefore) pair.commentBefore = pair.commentBefore ? `${item.commentBefore}\n${pair.commentBefore}` : item.commentBefore;
-      if (item.comment) pair.comment = pair.comment ? `${item.comment}\n${pair.comment}` : item.comment;
-      item = pair;
-    }
-    seq.items[i] = item instanceof resolveSeq.Pair ? item : new resolveSeq.Pair(item);
-  }
-
-  return seq;
-}
-function createPairs(schema, iterable, ctx) {
-  const pairs = new resolveSeq.YAMLSeq(schema);
-  pairs.tag = 'tag:yaml.org,2002:pairs';
-
-  for (const it of iterable) {
-    let key, value;
-
-    if (Array.isArray(it)) {
-      if (it.length === 2) {
-        key = it[0];
-        value = it[1];
-      } else throw new TypeError(`Expected [key, value] tuple: ${it}`);
-    } else if (it && it instanceof Object) {
-      const keys = Object.keys(it);
-
-      if (keys.length === 1) {
-        key = keys[0];
-        value = it[key];
-      } else throw new TypeError(`Expected { key: value } tuple: ${it}`);
-    } else {
-      key = it;
-    }
-
-    const pair = schema.createPair(key, value, ctx);
-    pairs.items.push(pair);
-  }
-
-  return pairs;
-}
-const pairs = {
-  default: false,
-  tag: 'tag:yaml.org,2002:pairs',
-  resolve: parsePairs,
-  createNode: createPairs
-};
-
-class YAMLOMap extends resolveSeq.YAMLSeq {
-  constructor() {
-    super();
-
-    PlainValue._defineProperty(this, "add", resolveSeq.YAMLMap.prototype.add.bind(this));
-
-    PlainValue._defineProperty(this, "delete", resolveSeq.YAMLMap.prototype.delete.bind(this));
-
-    PlainValue._defineProperty(this, "get", resolveSeq.YAMLMap.prototype.get.bind(this));
-
-    PlainValue._defineProperty(this, "has", resolveSeq.YAMLMap.prototype.has.bind(this));
-
-    PlainValue._defineProperty(this, "set", resolveSeq.YAMLMap.prototype.set.bind(this));
-
-    this.tag = YAMLOMap.tag;
-  }
-
-  toJSON(_, ctx) {
-    const map = new Map();
-    if (ctx && ctx.onCreate) ctx.onCreate(map);
-
-    for (const pair of this.items) {
-      let key, value;
-
-      if (pair instanceof resolveSeq.Pair) {
-        key = resolveSeq.toJSON(pair.key, '', ctx);
-        value = resolveSeq.toJSON(pair.value, key, ctx);
-      } else {
-        key = resolveSeq.toJSON(pair, '', ctx);
-      }
-
-      if (map.has(key)) throw new Error('Ordered maps must not include duplicate keys');
-      map.set(key, value);
-    }
-
-    return map;
-  }
-
-}
-
-PlainValue._defineProperty(YAMLOMap, "tag", 'tag:yaml.org,2002:omap');
-
-function parseOMap(doc, cst) {
-  const pairs = parsePairs(doc, cst);
-  const seenKeys = [];
-
-  for (const {
-    key
-  } of pairs.items) {
-    if (key instanceof resolveSeq.Scalar) {
-      if (seenKeys.includes(key.value)) {
-        const msg = 'Ordered maps must not include duplicate keys';
-        throw new PlainValue.YAMLSemanticError(cst, msg);
-      } else {
-        seenKeys.push(key.value);
-      }
-    }
-  }
-
-  return Object.assign(new YAMLOMap(), pairs);
-}
-
-function createOMap(schema, iterable, ctx) {
-  const pairs = createPairs(schema, iterable, ctx);
-  const omap = new YAMLOMap();
-  omap.items = pairs.items;
-  return omap;
-}
-
-const omap = {
-  identify: value => value instanceof Map,
-  nodeClass: YAMLOMap,
-  default: false,
-  tag: 'tag:yaml.org,2002:omap',
-  resolve: parseOMap,
-  createNode: createOMap
-};
-
-class YAMLSet extends resolveSeq.YAMLMap {
-  constructor() {
-    super();
-    this.tag = YAMLSet.tag;
-  }
-
-  add(key) {
-    const pair = key instanceof resolveSeq.Pair ? key : new resolveSeq.Pair(key);
-    const prev = resolveSeq.findPair(this.items, pair.key);
-    if (!prev) this.items.push(pair);
-  }
-
-  get(key, keepPair) {
-    const pair = resolveSeq.findPair(this.items, key);
-    return !keepPair && pair instanceof resolveSeq.Pair ? pair.key instanceof resolveSeq.Scalar ? pair.key.value : pair.key : pair;
-  }
-
-  set(key, value) {
-    if (typeof value !== 'boolean') throw new Error(`Expected boolean value for set(key, value) in a YAML set, not ${typeof value}`);
-    const prev = resolveSeq.findPair(this.items, key);
-
-    if (prev && !value) {
-      this.items.splice(this.items.indexOf(prev), 1);
-    } else if (!prev && value) {
-      this.items.push(new resolveSeq.Pair(key));
-    }
-  }
-
-  toJSON(_, ctx) {
-    return super.toJSON(_, ctx, Set);
-  }
-
-  toString(ctx, onComment, onChompKeep) {
-    if (!ctx) return JSON.stringify(this);
-    if (this.hasAllNullValues()) return super.toString(ctx, onComment, onChompKeep);else throw new Error('Set items must all have null values');
-  }
-
-}
-
-PlainValue._defineProperty(YAMLSet, "tag", 'tag:yaml.org,2002:set');
-
-function parseSet(doc, cst) {
-  const map = resolveSeq.resolveMap(doc, cst);
-  if (!map.hasAllNullValues()) throw new PlainValue.YAMLSemanticError(cst, 'Set items must all have null values');
-  return Object.assign(new YAMLSet(), map);
-}
-
-function createSet(schema, iterable, ctx) {
-  const set = new YAMLSet();
-
-  for (const value of iterable) set.items.push(schema.createPair(value, null, ctx));
-
-  return set;
-}
-
-const set = {
-  identify: value => value instanceof Set,
-  nodeClass: YAMLSet,
-  default: false,
-  tag: 'tag:yaml.org,2002:set',
-  resolve: parseSet,
-  createNode: createSet
-};
-
-const parseSexagesimal = (sign, parts) => {
-  const n = parts.split(':').reduce((n, p) => n * 60 + Number(p), 0);
-  return sign === '-' ? -n : n;
-}; // hhhh:mm:ss.sss
-
-
-const stringifySexagesimal = ({
-  value
-}) => {
-  if (isNaN(value) || !isFinite(value)) return resolveSeq.stringifyNumber(value);
-  let sign = '';
-
-  if (value < 0) {
-    sign = '-';
-    value = Math.abs(value);
-  }
-
-  const parts = [value % 60]; // seconds, including ms
-
-  if (value < 60) {
-    parts.unshift(0); // at least one : is required
-  } else {
-    value = Math.round((value - parts[0]) / 60);
-    parts.unshift(value % 60); // minutes
-
-    if (value >= 60) {
-      value = Math.round((value - parts[0]) / 60);
-      parts.unshift(value); // hours
-    }
-  }
-
-  return sign + parts.map(n => n < 10 ? '0' + String(n) : String(n)).join(':').replace(/000000\d*$/, '') // % 60 may introduce error
-  ;
-};
-
-const intTime = {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:int',
-  format: 'TIME',
-  test: /^([-+]?)([0-9][0-9_]*(?::[0-5]?[0-9])+)$/,
-  resolve: (str, sign, parts) => parseSexagesimal(sign, parts.replace(/_/g, '')),
-  stringify: stringifySexagesimal
-};
-const floatTime = {
-  identify: value => typeof value === 'number',
-  default: true,
-  tag: 'tag:yaml.org,2002:float',
-  format: 'TIME',
-  test: /^([-+]?)([0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*)$/,
-  resolve: (str, sign, parts) => parseSexagesimal(sign, parts.replace(/_/g, '')),
-  stringify: stringifySexagesimal
-};
-const timestamp = {
-  identify: value => value instanceof Date,
-  default: true,
-  tag: 'tag:yaml.org,2002:timestamp',
-  // If the time zone is omitted, the timestamp is assumed to be specified in UTC. The time part
-  // may be omitted altogether, resulting in a date format. In such a case, the time part is
-  // assumed to be 00:00:00Z (start of day, UTC).
-  test: RegExp('^(?:' + '([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})' + // YYYY-Mm-Dd
-  '(?:(?:t|T|[ \\t]+)' + // t | T | whitespace
-  '([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)' + // Hh:Mm:Ss(.ss)?
-  '(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?' + // Z | +5 | -03:30
-  ')?' + ')$'),
-  resolve: (str, year, month, day, hour, minute, second, millisec, tz) => {
-    if (millisec) millisec = (millisec + '00').substr(1, 3);
-    let date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec || 0);
-
-    if (tz && tz !== 'Z') {
-      let d = parseSexagesimal(tz[0], tz.slice(1));
-      if (Math.abs(d) < 30) d *= 60;
-      date -= 60000 * d;
-    }
-
-    return new Date(date);
-  },
-  stringify: ({
-    value
-  }) => value.toISOString().replace(/((T00:00)?:00)?\.000Z$/, '')
-};
-
-/* global console, process, YAML_SILENCE_DEPRECATION_WARNINGS, YAML_SILENCE_WARNINGS */
-function shouldWarn(deprecation) {
-  const env = typeof process !== 'undefined' && process.env || {};
-
-  if (deprecation) {
-    if (typeof YAML_SILENCE_DEPRECATION_WARNINGS !== 'undefined') return !YAML_SILENCE_DEPRECATION_WARNINGS;
-    return !env.YAML_SILENCE_DEPRECATION_WARNINGS;
-  }
-
-  if (typeof YAML_SILENCE_WARNINGS !== 'undefined') return !YAML_SILENCE_WARNINGS;
-  return !env.YAML_SILENCE_WARNINGS;
-}
-
-function warn(warning, type) {
-  if (shouldWarn(false)) {
-    const emit = typeof process !== 'undefined' && process.emitWarning; // This will throw in Jest if `warning` is an Error instance due to
-    // https://github.com/facebook/jest/issues/2549
-
-    if (emit) emit(warning, type);else {
-      // eslint-disable-next-line no-console
-      console.warn(type ? `${type}: ${warning}` : warning);
-    }
-  }
-}
-function warnFileDeprecation(filename) {
-  if (shouldWarn(true)) {
-    const path = filename.replace(/.*yaml[/\\]/i, '').replace(/\.js$/, '').replace(/\\/g, '/');
-    warn(`The endpoint 'yaml/${path}' will be removed in a future release.`, 'DeprecationWarning');
-  }
-}
-const warned = {};
-function warnOptionDeprecation(name, alternative) {
-  if (!warned[name] && shouldWarn(true)) {
-    warned[name] = true;
-    let msg = `The option '${name}' will be removed in a future release`;
-    msg += alternative ? `, use '${alternative}' instead.` : '.';
-    warn(msg, 'DeprecationWarning');
-  }
-}
-
-exports.binary = binary;
-exports.floatTime = floatTime;
-exports.intTime = intTime;
-exports.omap = omap;
-exports.pairs = pairs;
-exports.set = set;
-exports.timestamp = timestamp;
-exports.warn = warn;
-exports.warnFileDeprecation = warnFileDeprecation;
-exports.warnOptionDeprecation = warnOptionDeprecation;
 
 
 /***/ }),
+/* 626 */,
 /* 627 */
 /***/ (function(module) {
 
@@ -60803,6 +61533,10 @@ function supportsHyperlink(stream) {
 		return false;
 	}
 
+	if ('NETLIFY' in env) {
+		return true;
+	}
+
 	if ('CI' in env) {
 		return false;
 	}
@@ -61122,7 +61856,47 @@ module.exports = require("util");
 /* 670 */,
 /* 671 */,
 /* 672 */,
-/* 673 */,
+/* 673 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.getSignals=void 0;var _os=__webpack_require__(87);
+
+var _core=__webpack_require__(724);
+var _realtime=__webpack_require__(945);
+
+
+
+const getSignals=function(){
+const realtimeSignals=(0,_realtime.getRealtimeSignals)();
+const signals=[..._core.SIGNALS,...realtimeSignals].map(normalizeSignal);
+return signals;
+};exports.getSignals=getSignals;
+
+
+
+
+
+
+
+const normalizeSignal=function({
+name,
+number:defaultNumber,
+description,
+action,
+forced=false,
+standard})
+{
+const{
+signals:{[name]:constantSignal}}=
+_os.constants;
+const supported=constantSignal!==undefined;
+const number=supported?constantSignal:defaultNumber;
+return{name,number,description,supported,action,forced,standard};
+};
+//# sourceMappingURL=signals.js.map
+
+/***/ }),
 /* 674 */
 /***/ (function(__unusedmodule, exports) {
 
@@ -61212,6 +61986,7 @@ function isIdentifierName(name) {
 const Tokenizer = __webpack_require__(573);
 const { defaults } = __webpack_require__(918);
 const { block, inline } = __webpack_require__(248);
+const { repeatString } = __webpack_require__(345);
 
 /**
  * smartypants text replacement
@@ -61304,6 +62079,14 @@ module.exports = class Lexer {
   }
 
   /**
+   * Static Lex Inline Method
+   */
+  static lexInline(src, options) {
+    const lexer = new Lexer(options);
+    return lexer.inlineTokens(src);
+  }
+
+  /**
    * Preprocessing
    */
   lex(src) {
@@ -61322,7 +62105,9 @@ module.exports = class Lexer {
    * Lexing
    */
   blockTokens(src, tokens = [], top = true) {
-    src = src.replace(/^ +$/gm, '');
+    if (this.options.pedantic) {
+      src = src.replace(/^ +$/gm, '');
+    }
     let token, i, l, lastToken;
 
     while (src) {
@@ -61336,14 +62121,15 @@ module.exports = class Lexer {
       }
 
       // code
-      if (token = this.tokenizer.code(src, tokens)) {
+      if (token = this.tokenizer.code(src)) {
         src = src.substring(token.raw.length);
-        if (token.type) {
-          tokens.push(token);
-        } else {
-          lastToken = tokens[tokens.length - 1];
+        lastToken = tokens[tokens.length - 1];
+        // An indented code block cannot interrupt a paragraph.
+        if (lastToken && lastToken.type === 'paragraph') {
           lastToken.raw += '\n' + token.raw;
           lastToken.text += '\n' + token.text;
+        } else {
+          tokens.push(token);
         }
         continue;
       }
@@ -61436,14 +62222,14 @@ module.exports = class Lexer {
       }
 
       // text
-      if (token = this.tokenizer.text(src, tokens)) {
+      if (token = this.tokenizer.text(src)) {
         src = src.substring(token.raw.length);
-        if (token.type) {
-          tokens.push(token);
-        } else {
-          lastToken = tokens[tokens.length - 1];
+        lastToken = tokens[tokens.length - 1];
+        if (lastToken && lastToken.type === 'text') {
           lastToken.raw += '\n' + token.raw;
           lastToken.text += '\n' + token.text;
+        } else {
+          tokens.push(token);
         }
         continue;
       }
@@ -61530,12 +62316,13 @@ module.exports = class Lexer {
   /**
    * Lexing/Compiling
    */
-  inlineTokens(src, tokens = [], inLink = false, inRawBlock = false, prevChar = '') {
-    let token;
+  inlineTokens(src, tokens = [], inLink = false, inRawBlock = false) {
+    let token, lastToken;
 
     // String with links masked to avoid interference with em and strong
     let maskedSrc = src;
     let match;
+    let keepPrevChar, prevChar;
 
     // Mask out reflinks
     if (this.tokens.links) {
@@ -61543,17 +62330,27 @@ module.exports = class Lexer {
       if (links.length > 0) {
         while ((match = this.tokenizer.rules.inline.reflinkSearch.exec(maskedSrc)) != null) {
           if (links.includes(match[0].slice(match[0].lastIndexOf('[') + 1, -1))) {
-            maskedSrc = maskedSrc.slice(0, match.index) + '[' + 'a'.repeat(match[0].length - 2) + ']' + maskedSrc.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex);
+            maskedSrc = maskedSrc.slice(0, match.index) + '[' + repeatString('a', match[0].length - 2) + ']' + maskedSrc.slice(this.tokenizer.rules.inline.reflinkSearch.lastIndex);
           }
         }
       }
     }
     // Mask out other blocks
     while ((match = this.tokenizer.rules.inline.blockSkip.exec(maskedSrc)) != null) {
-      maskedSrc = maskedSrc.slice(0, match.index) + '[' + 'a'.repeat(match[0].length - 2) + ']' + maskedSrc.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);
+      maskedSrc = maskedSrc.slice(0, match.index) + '[' + repeatString('a', match[0].length - 2) + ']' + maskedSrc.slice(this.tokenizer.rules.inline.blockSkip.lastIndex);
+    }
+
+    // Mask out escaped em & strong delimiters
+    while ((match = this.tokenizer.rules.inline.escapedEmSt.exec(maskedSrc)) != null) {
+      maskedSrc = maskedSrc.slice(0, match.index) + '++' + maskedSrc.slice(this.tokenizer.rules.inline.escapedEmSt.lastIndex);
     }
 
     while (src) {
+      if (!keepPrevChar) {
+        prevChar = '';
+      }
+      keepPrevChar = false;
+
       // escape
       if (token = this.tokenizer.escape(src)) {
         src = src.substring(token.raw.length);
@@ -61566,7 +62363,13 @@ module.exports = class Lexer {
         src = src.substring(token.raw.length);
         inLink = token.inLink;
         inRawBlock = token.inRawBlock;
-        tokens.push(token);
+        const lastToken = tokens[tokens.length - 1];
+        if (lastToken && token.type === 'text' && lastToken.type === 'text') {
+          lastToken.raw += token.raw;
+          lastToken.text += token.text;
+        } else {
+          tokens.push(token);
+        }
         continue;
       }
 
@@ -61583,23 +62386,21 @@ module.exports = class Lexer {
       // reflink, nolink
       if (token = this.tokenizer.reflink(src, this.tokens.links)) {
         src = src.substring(token.raw.length);
+        const lastToken = tokens[tokens.length - 1];
         if (token.type === 'link') {
           token.tokens = this.inlineTokens(token.text, [], true, inRawBlock);
+          tokens.push(token);
+        } else if (lastToken && token.type === 'text' && lastToken.type === 'text') {
+          lastToken.raw += token.raw;
+          lastToken.text += token.text;
+        } else {
+          tokens.push(token);
         }
-        tokens.push(token);
         continue;
       }
 
-      // strong
-      if (token = this.tokenizer.strong(src, maskedSrc, prevChar)) {
-        src = src.substring(token.raw.length);
-        token.tokens = this.inlineTokens(token.text, [], inLink, inRawBlock);
-        tokens.push(token);
-        continue;
-      }
-
-      // em
-      if (token = this.tokenizer.em(src, maskedSrc, prevChar)) {
+      // em & strong
+      if (token = this.tokenizer.emStrong(src, maskedSrc, prevChar)) {
         src = src.substring(token.raw.length);
         token.tokens = this.inlineTokens(token.text, [], inLink, inRawBlock);
         tokens.push(token);
@@ -61645,8 +62446,17 @@ module.exports = class Lexer {
       // text
       if (token = this.tokenizer.inlineText(src, inRawBlock, smartypants)) {
         src = src.substring(token.raw.length);
-        prevChar = token.raw.slice(-1);
-        tokens.push(token);
+        if (token.raw.slice(-1) !== '_') { // Track prevChar before string of ____ started
+          prevChar = token.raw.slice(-1);
+        }
+        keepPrevChar = true;
+        lastToken = tokens[tokens.length - 1];
+        if (lastToken && lastToken.type === 'text') {
+          lastToken.raw += token.raw;
+          lastToken.text += token.text;
+        } else {
+          tokens.push(token);
+        }
         continue;
       }
 
@@ -61674,6 +62484,7 @@ const core = __webpack_require__(470)
 const github = __webpack_require__(469)
 const execa = __webpack_require__(955)
 const semanticRelease = __webpack_require__(917)
+const { COMMIT_NAME, COMMIT_EMAIL } = __webpack_require__(861)
 
 const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
@@ -61719,29 +62530,18 @@ const clean = async () => {
 const release = async () => {
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
 
-  await shell('git config user.name psa-builder')
-  await shell('git config user.email admin-group@playstudios.asia')
-
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
-    await shell('git merge -')
+    await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
     await shell('git checkout stash^3 .')
     const options = {
       branches: [branch],
+      releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
+      preset: 'conventionalcommits',
       plugins: [
-        [
-          '@semantic-release/commit-analyzer',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
-        [
-          '@semantic-release/release-notes-generator',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
+        '@semantic-release/commit-analyzer',
+        '@semantic-release/release-notes-generator',
         '@semantic-release/github',
         '@semantic-release/changelog',
         [
@@ -61754,7 +62554,7 @@ const release = async () => {
     }
     const modules = [
       'semantic-release',
-      'conventional-changelog-conventionalcommits',
+      `conventional-changelog-${options.preset}`,
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
     await shell(`npm i ${modules.join(' ')}`)
@@ -61770,7 +62570,9 @@ const release = async () => {
     }
   } else {
     await shell('git add -A')
-    await shell("git commit -m 'chore(release): generate dist files'")
+    await shell(
+      `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+    )
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }
@@ -61788,7 +62590,55 @@ module.exports = patch
 
 
 /***/ }),
-/* 678 */,
+/* 678 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const pTry = __webpack_require__(343);
+
+module.exports = concurrency => {
+	if (concurrency < 1) {
+		throw new TypeError('Expected `concurrency` to be a number from 1 and up');
+	}
+
+	const queue = [];
+	let activeCount = 0;
+
+	const next = () => {
+		activeCount--;
+
+		if (queue.length > 0) {
+			queue.shift()();
+		}
+	};
+
+	return fn => new Promise((resolve, reject) => {
+		const run = () => {
+			activeCount++;
+
+			pTry(fn).then(
+				val => {
+					resolve(val);
+					next();
+				},
+				err => {
+					reject(err);
+					next();
+				}
+			);
+		};
+
+		if (activeCount < concurrency) {
+			run();
+		} else {
+			queue.push(run);
+		}
+	});
+};
+
+
+/***/ }),
 /* 679 */,
 /* 680 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -61796,7 +62646,7 @@ module.exports = patch
 "use strict";
 
 const path = __webpack_require__(622);
-const findUp = __webpack_require__(380);
+const findUp = __webpack_require__(341);
 const readPkg = __webpack_require__(919);
 
 module.exports = async options => {
@@ -62057,7 +62907,110 @@ module.exports = split
 /***/ }),
 /* 686 */,
 /* 687 */,
-/* 688 */,
+/* 688 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const isStream = __webpack_require__(323);
+const getStream = __webpack_require__(145);
+const mergeStream = __webpack_require__(778);
+
+// `input` option
+const handleInput = (spawned, input) => {
+	// Checking for stdin is workaround for https://github.com/nodejs/node/issues/26852
+	// TODO: Remove `|| spawned.stdin === undefined` once we drop support for Node.js <=12.2.0
+	if (input === undefined || spawned.stdin === undefined) {
+		return;
+	}
+
+	if (isStream(input)) {
+		input.pipe(spawned.stdin);
+	} else {
+		spawned.stdin.end(input);
+	}
+};
+
+// `all` interleaves `stdout` and `stderr`
+const makeAllStream = (spawned, {all}) => {
+	if (!all || (!spawned.stdout && !spawned.stderr)) {
+		return;
+	}
+
+	const mixed = mergeStream();
+
+	if (spawned.stdout) {
+		mixed.add(spawned.stdout);
+	}
+
+	if (spawned.stderr) {
+		mixed.add(spawned.stderr);
+	}
+
+	return mixed;
+};
+
+// On failure, `result.stdout|stderr|all` should contain the currently buffered stream
+const getBufferedData = async (stream, streamPromise) => {
+	if (!stream) {
+		return;
+	}
+
+	stream.destroy();
+
+	try {
+		return await streamPromise;
+	} catch (error) {
+		return error.bufferedData;
+	}
+};
+
+const getStreamPromise = (stream, {encoding, buffer, maxBuffer}) => {
+	if (!stream || !buffer) {
+		return;
+	}
+
+	if (encoding) {
+		return getStream(stream, {encoding, maxBuffer});
+	}
+
+	return getStream.buffer(stream, {maxBuffer});
+};
+
+// Retrieve result of child process: exit code, signal, error, streams (stdout/stderr/all)
+const getSpawnedResult = async ({stdout, stderr, all}, {encoding, buffer, maxBuffer}, processDone) => {
+	const stdoutPromise = getStreamPromise(stdout, {encoding, buffer, maxBuffer});
+	const stderrPromise = getStreamPromise(stderr, {encoding, buffer, maxBuffer});
+	const allPromise = getStreamPromise(all, {encoding, buffer, maxBuffer: maxBuffer * 2});
+
+	try {
+		return await Promise.all([processDone, stdoutPromise, stderrPromise, allPromise]);
+	} catch (error) {
+		return Promise.all([
+			{error, signal: error.signal, timedOut: error.timedOut},
+			getBufferedData(stdout, stdoutPromise),
+			getBufferedData(stderr, stderrPromise),
+			getBufferedData(all, allPromise)
+		]);
+	}
+};
+
+const validateInputSync = ({input}) => {
+	if (isStream(input)) {
+		throw new TypeError('The `input` option cannot be a stream in sync mode');
+	}
+};
+
+module.exports = {
+	handleInput,
+	makeAllStream,
+	getSpawnedResult,
+	validateInputSync
+};
+
+
+
+/***/ }),
 /* 689 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -62175,7 +63128,7 @@ exports.Deprecation = Deprecation;
 
 const escapeStringRegexp = __webpack_require__(138);
 const ansiStyles = __webpack_require__(613);
-const stdoutColor = __webpack_require__(798).stdout;
+const stdoutColor = __webpack_require__(242).stdout;
 
 const template = __webpack_require__(681);
 
@@ -62404,82 +63357,99 @@ module.exports.default = module.exports; // For TypeScript
 
 /***/ }),
 /* 695 */
-/***/ (function(module) {
-
-// https://docs.gitlab.com/ce/ci/variables/README.html
-
-module.exports = {
-	detect({env}) {
-		return Boolean(env.GITLAB_CI);
-	},
-	configuration({env}) {
-		const pr = env.CI_MERGE_REQUEST_ID;
-		const isPr = Boolean(pr);
-
-		return {
-			name: 'GitLab CI/CD',
-			service: 'gitlab',
-			commit: env.CI_COMMIT_SHA,
-			tag: env.CI_COMMIT_TAG,
-			build: env.CI_PIPELINE_ID,
-			buildUrl: `${env.CI_PROJECT_URL}/pipelines/${env.CI_PIPELINE_ID}`,
-			job: env.CI_JOB_ID,
-			jobUrl: `${env.CI_PROJECT_URL}/-/jobs/${env.CI_JOB_ID}`,
-			branch: isPr ? env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME : env.CI_COMMIT_REF_NAME,
-			pr,
-			isPr,
-			prBranch: env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME,
-			slug: env.CI_PROJECT_PATH,
-			root: env.CI_PROJECT_DIR,
-		};
-	},
-};
-
-
-/***/ }),
-/* 696 */
-/***/ (function(module) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
 "use strict";
 
+const {signalsByName} = __webpack_require__(447);
 
-/*!
- * is-plain-object <https://github.com/jonschlinkert/is-plain-object>
- *
- * Copyright (c) 2014-2017, Jon Schlinkert.
- * Released under the MIT License.
- */
+const getErrorPrefix = ({timedOut, timeout, errorCode, signal, signalDescription, exitCode, isCanceled}) => {
+	if (timedOut) {
+		return `timed out after ${timeout} milliseconds`;
+	}
 
-function isObject(o) {
-  return Object.prototype.toString.call(o) === '[object Object]';
-}
+	if (isCanceled) {
+		return 'was canceled';
+	}
 
-function isPlainObject(o) {
-  var ctor,prot;
+	if (errorCode !== undefined) {
+		return `failed with ${errorCode}`;
+	}
 
-  if (isObject(o) === false) return false;
+	if (signal !== undefined) {
+		return `was killed with ${signal} (${signalDescription})`;
+	}
 
-  // If has modified constructor
-  ctor = o.constructor;
-  if (ctor === undefined) return true;
+	if (exitCode !== undefined) {
+		return `failed with exit code ${exitCode}`;
+	}
 
-  // If has modified prototype
-  prot = ctor.prototype;
-  if (isObject(prot) === false) return false;
+	return 'failed';
+};
 
-  // If constructor does not have an Object-specific method
-  if (prot.hasOwnProperty('isPrototypeOf') === false) {
-    return false;
-  }
+const makeError = ({
+	stdout,
+	stderr,
+	all,
+	error,
+	signal,
+	exitCode,
+	command,
+	timedOut,
+	isCanceled,
+	killed,
+	parsed: {options: {timeout}}
+}) => {
+	// `signal` and `exitCode` emitted on `spawned.on('exit')` event can be `null`.
+	// We normalize them to `undefined`
+	exitCode = exitCode === null ? undefined : exitCode;
+	signal = signal === null ? undefined : signal;
+	const signalDescription = signal === undefined ? undefined : signalsByName[signal].description;
 
-  // Most likely a plain Object
-  return true;
-}
+	const errorCode = error && error.code;
 
-module.exports = isPlainObject;
+	const prefix = getErrorPrefix({timedOut, timeout, errorCode, signal, signalDescription, exitCode, isCanceled});
+	const execaMessage = `Command ${prefix}: ${command}`;
+	const isError = Object.prototype.toString.call(error) === '[object Error]';
+	const shortMessage = isError ? `${execaMessage}\n${error.message}` : execaMessage;
+	const message = [shortMessage, stderr, stdout].filter(Boolean).join('\n');
+
+	if (isError) {
+		error.originalMessage = error.message;
+		error.message = message;
+	} else {
+		error = new Error(message);
+	}
+
+	error.shortMessage = shortMessage;
+	error.command = command;
+	error.exitCode = exitCode;
+	error.signal = signal;
+	error.signalDescription = signalDescription;
+	error.stdout = stdout;
+	error.stderr = stderr;
+
+	if (all !== undefined) {
+		error.all = all;
+	}
+
+	if ('bufferedData' in error) {
+		delete error.bufferedData;
+	}
+
+	error.failed = true;
+	error.timedOut = Boolean(timedOut);
+	error.isCanceled = isCanceled;
+	error.killed = killed && !timedOut;
+
+	return error;
+};
+
+module.exports = makeError;
 
 
 /***/ }),
+/* 696 */,
 /* 697 */,
 /* 698 */,
 /* 699 */,
@@ -63144,27 +64114,7 @@ module.exports = async (context) => {
 /***/ }),
 /* 716 */,
 /* 717 */,
-/* 718 */
-/***/ (function(module) {
-
-"use strict";
-
-module.exports = x => {
-	if (typeof x !== 'string') {
-		throw new TypeError('Expected a string, got ' + typeof x);
-	}
-
-	// Catches EFBBBF (UTF-8 BOM) because the buffer-to-string
-	// conversion translates it to FEFF (UTF-16 BOM)
-	if (x.charCodeAt(0) === 0xFEFF) {
-		return x.slice(1);
-	}
-
-	return x;
-};
-
-
-/***/ }),
+/* 718 */,
 /* 719 */
 /***/ (function(module) {
 
@@ -63574,55 +64524,327 @@ const mimicFn = __webpack_require__(750);
 
 const calledFunctions = new WeakMap();
 
-const oneTime = (fn, options = {}) => {
-	if (typeof fn !== 'function') {
+const onetime = (function_, options = {}) => {
+	if (typeof function_ !== 'function') {
 		throw new TypeError('Expected a function');
 	}
 
-	let ret;
-	let isCalled = false;
+	let returnValue;
 	let callCount = 0;
-	const functionName = fn.displayName || fn.name || '<anonymous>';
+	const functionName = function_.displayName || function_.name || '<anonymous>';
 
-	const onetime = function (...args) {
+	const onetime = function (...arguments_) {
 		calledFunctions.set(onetime, ++callCount);
 
-		if (isCalled) {
-			if (options.throw === true) {
-				throw new Error(`Function \`${functionName}\` can only be called once`);
-			}
-
-			return ret;
+		if (callCount === 1) {
+			returnValue = function_.apply(this, arguments_);
+			function_ = null;
+		} else if (options.throw === true) {
+			throw new Error(`Function \`${functionName}\` can only be called once`);
 		}
 
-		isCalled = true;
-		ret = fn.apply(this, args);
-		fn = null;
-
-		return ret;
+		return returnValue;
 	};
 
-	mimicFn(onetime, fn);
+	mimicFn(onetime, function_);
 	calledFunctions.set(onetime, callCount);
 
 	return onetime;
 };
 
-module.exports = oneTime;
+module.exports = onetime;
 // TODO: Remove this for the next major release
-module.exports.default = oneTime;
+module.exports.default = onetime;
 
-module.exports.callCount = fn => {
-	if (!calledFunctions.has(fn)) {
-		throw new Error(`The given function \`${fn.name}\` is not wrapped by the \`onetime\` package`);
+module.exports.callCount = function_ => {
+	if (!calledFunctions.has(function_)) {
+		throw new Error(`The given function \`${function_.name}\` is not wrapped by the \`onetime\` package`);
 	}
 
-	return calledFunctions.get(fn);
+	return calledFunctions.get(function_);
 };
 
 
 /***/ }),
-/* 724 */,
+/* 724 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.SIGNALS=void 0;
+
+const SIGNALS=[
+{
+name:"SIGHUP",
+number:1,
+action:"terminate",
+description:"Terminal closed",
+standard:"posix"},
+
+{
+name:"SIGINT",
+number:2,
+action:"terminate",
+description:"User interruption with CTRL-C",
+standard:"ansi"},
+
+{
+name:"SIGQUIT",
+number:3,
+action:"core",
+description:"User interruption with CTRL-\\",
+standard:"posix"},
+
+{
+name:"SIGILL",
+number:4,
+action:"core",
+description:"Invalid machine instruction",
+standard:"ansi"},
+
+{
+name:"SIGTRAP",
+number:5,
+action:"core",
+description:"Debugger breakpoint",
+standard:"posix"},
+
+{
+name:"SIGABRT",
+number:6,
+action:"core",
+description:"Aborted",
+standard:"ansi"},
+
+{
+name:"SIGIOT",
+number:6,
+action:"core",
+description:"Aborted",
+standard:"bsd"},
+
+{
+name:"SIGBUS",
+number:7,
+action:"core",
+description:
+"Bus error due to misaligned, non-existing address or paging error",
+standard:"bsd"},
+
+{
+name:"SIGEMT",
+number:7,
+action:"terminate",
+description:"Command should be emulated but is not implemented",
+standard:"other"},
+
+{
+name:"SIGFPE",
+number:8,
+action:"core",
+description:"Floating point arithmetic error",
+standard:"ansi"},
+
+{
+name:"SIGKILL",
+number:9,
+action:"terminate",
+description:"Forced termination",
+standard:"posix",
+forced:true},
+
+{
+name:"SIGUSR1",
+number:10,
+action:"terminate",
+description:"Application-specific signal",
+standard:"posix"},
+
+{
+name:"SIGSEGV",
+number:11,
+action:"core",
+description:"Segmentation fault",
+standard:"ansi"},
+
+{
+name:"SIGUSR2",
+number:12,
+action:"terminate",
+description:"Application-specific signal",
+standard:"posix"},
+
+{
+name:"SIGPIPE",
+number:13,
+action:"terminate",
+description:"Broken pipe or socket",
+standard:"posix"},
+
+{
+name:"SIGALRM",
+number:14,
+action:"terminate",
+description:"Timeout or timer",
+standard:"posix"},
+
+{
+name:"SIGTERM",
+number:15,
+action:"terminate",
+description:"Termination",
+standard:"ansi"},
+
+{
+name:"SIGSTKFLT",
+number:16,
+action:"terminate",
+description:"Stack is empty or overflowed",
+standard:"other"},
+
+{
+name:"SIGCHLD",
+number:17,
+action:"ignore",
+description:"Child process terminated, paused or unpaused",
+standard:"posix"},
+
+{
+name:"SIGCLD",
+number:17,
+action:"ignore",
+description:"Child process terminated, paused or unpaused",
+standard:"other"},
+
+{
+name:"SIGCONT",
+number:18,
+action:"unpause",
+description:"Unpaused",
+standard:"posix",
+forced:true},
+
+{
+name:"SIGSTOP",
+number:19,
+action:"pause",
+description:"Paused",
+standard:"posix",
+forced:true},
+
+{
+name:"SIGTSTP",
+number:20,
+action:"pause",
+description:"Paused using CTRL-Z or \"suspend\"",
+standard:"posix"},
+
+{
+name:"SIGTTIN",
+number:21,
+action:"pause",
+description:"Background process cannot read terminal input",
+standard:"posix"},
+
+{
+name:"SIGBREAK",
+number:21,
+action:"terminate",
+description:"User interruption with CTRL-BREAK",
+standard:"other"},
+
+{
+name:"SIGTTOU",
+number:22,
+action:"pause",
+description:"Background process cannot write to terminal output",
+standard:"posix"},
+
+{
+name:"SIGURG",
+number:23,
+action:"ignore",
+description:"Socket received out-of-band data",
+standard:"bsd"},
+
+{
+name:"SIGXCPU",
+number:24,
+action:"core",
+description:"Process timed out",
+standard:"bsd"},
+
+{
+name:"SIGXFSZ",
+number:25,
+action:"core",
+description:"File too big",
+standard:"bsd"},
+
+{
+name:"SIGVTALRM",
+number:26,
+action:"terminate",
+description:"Timeout or timer",
+standard:"bsd"},
+
+{
+name:"SIGPROF",
+number:27,
+action:"terminate",
+description:"Timeout or timer",
+standard:"bsd"},
+
+{
+name:"SIGWINCH",
+number:28,
+action:"ignore",
+description:"Terminal window size changed",
+standard:"bsd"},
+
+{
+name:"SIGIO",
+number:29,
+action:"terminate",
+description:"I/O is available",
+standard:"other"},
+
+{
+name:"SIGPOLL",
+number:29,
+action:"terminate",
+description:"Watched event",
+standard:"other"},
+
+{
+name:"SIGINFO",
+number:29,
+action:"ignore",
+description:"Request for process information",
+standard:"other"},
+
+{
+name:"SIGPWR",
+number:30,
+action:"terminate",
+description:"Device running out of power",
+standard:"systemv"},
+
+{
+name:"SIGSYS",
+number:31,
+action:"core",
+description:"Invalid system call",
+standard:"other"},
+
+{
+name:"SIGUNUSED",
+number:31,
+action:"terminate",
+description:"Invalid system call",
+standard:"other"}];exports.SIGNALS=SIGNALS;
+//# sourceMappingURL=core.js.map
+
+/***/ }),
 /* 725 */,
 /* 726 */,
 /* 727 */,
@@ -63634,7 +64856,7 @@ module.exports.callCount = fn => {
 const {isString, isRegExp} = __webpack_require__(557);
 const AggregateError = __webpack_require__(273);
 const pEachSeries = __webpack_require__(429);
-const DEFINITIONS = __webpack_require__(242);
+const DEFINITIONS = __webpack_require__(368);
 const getError = __webpack_require__(783);
 const {fetch, fetchNotes, verifyBranchName} = __webpack_require__(350);
 const expand = __webpack_require__(491);
@@ -63777,7 +64999,18 @@ module.exports = async ({cwd, env, lastRelease: {gitHead: from}, nextRelease: {g
 
 
 /***/ }),
-/* 739 */,
+/* 739 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var implementation = __webpack_require__(353);
+
+module.exports = Function.prototype.bind || implementation;
+
+
+/***/ }),
 /* 740 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -63908,23 +65141,19 @@ exports.shouldHighlight = shouldHighlight;
 exports.getChalk = getChalk;
 exports.default = highlight;
 
-var _jsTokens = _interopRequireWildcard(__webpack_require__(735));
-
 var _helperValidatorIdentifier = __webpack_require__(420);
 
-var _chalk = _interopRequireDefault(__webpack_require__(406));
+const jsTokens = __webpack_require__(735);
 
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+const Chalk = __webpack_require__(406);
 
-function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
-
-function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+const sometimesKeywords = new Set(["as", "async", "from", "get", "of", "set"]);
 
 function getDefs(chalk) {
   return {
     keyword: chalk.cyan,
     capitalized: chalk.yellow,
-    jsx_tag: chalk.yellow,
+    jsxIdentifier: chalk.yellow,
     punctuator: chalk.yellow,
     number: chalk.magenta,
     string: chalk.green,
@@ -63935,66 +65164,78 @@ function getDefs(chalk) {
 }
 
 const NEWLINE = /\r\n|[\n\r\u2028\u2029]/;
-const JSX_TAG = /^[a-z][\w-]*$/i;
 const BRACKET = /^[()[\]{}]$/;
+let tokenize;
+{
+  const JSX_TAG = /^[a-z][\w-]*$/i;
 
-function getTokenType(match) {
-  const [offset, text] = match.slice(-2);
-  const token = (0, _jsTokens.matchToToken)(match);
+  const getTokenType = function (token, offset, text) {
+    if (token.type === "name") {
+      if ((0, _helperValidatorIdentifier.isKeyword)(token.value) || (0, _helperValidatorIdentifier.isStrictReservedWord)(token.value, true) || sometimesKeywords.has(token.value)) {
+        return "keyword";
+      }
 
-  if (token.type === "name") {
-    if ((0, _helperValidatorIdentifier.isKeyword)(token.value) || (0, _helperValidatorIdentifier.isReservedWord)(token.value)) {
-      return "keyword";
+      if (JSX_TAG.test(token.value) && (text[offset - 1] === "<" || text.substr(offset - 2, 2) == "</")) {
+        return "jsxIdentifier";
+      }
+
+      if (token.value[0] !== token.value[0].toLowerCase()) {
+        return "capitalized";
+      }
     }
 
-    if (JSX_TAG.test(token.value) && (text[offset - 1] === "<" || text.substr(offset - 2, 2) == "</")) {
-      return "jsx_tag";
+    if (token.type === "punctuator" && BRACKET.test(token.value)) {
+      return "bracket";
     }
 
-    if (token.value[0] !== token.value[0].toLowerCase()) {
-      return "capitalized";
+    if (token.type === "invalid" && (token.value === "@" || token.value === "#")) {
+      return "punctuator";
     }
-  }
 
-  if (token.type === "punctuator" && BRACKET.test(token.value)) {
-    return "bracket";
-  }
+    return token.type;
+  };
 
-  if (token.type === "invalid" && (token.value === "@" || token.value === "#")) {
-    return "punctuator";
-  }
+  tokenize = function* (text) {
+    let match;
 
-  return token.type;
+    while (match = jsTokens.default.exec(text)) {
+      const token = jsTokens.matchToToken(match);
+      yield {
+        type: getTokenType(token, match.index, text),
+        value: token.value
+      };
+    }
+  };
 }
 
 function highlightTokens(defs, text) {
-  return text.replace(_jsTokens.default, function (...args) {
-    const type = getTokenType(args);
+  let highlighted = "";
+
+  for (const {
+    type,
+    value
+  } of tokenize(text)) {
     const colorize = defs[type];
 
     if (colorize) {
-      return args[0].split(NEWLINE).map(str => colorize(str)).join("\n");
+      highlighted += value.split(NEWLINE).map(str => colorize(str)).join("\n");
     } else {
-      return args[0];
+      highlighted += value;
     }
-  });
+  }
+
+  return highlighted;
 }
 
 function shouldHighlight(options) {
-  return _chalk.default.supportsColor || options.forceColor;
+  return !!Chalk.supportsColor || options.forceColor;
 }
 
 function getChalk(options) {
-  let chalk = _chalk.default;
-
-  if (options.forceColor) {
-    chalk = new _chalk.default.constructor({
-      enabled: true,
-      level: 1
-    });
-  }
-
-  return chalk;
+  return options.forceColor ? new Chalk.constructor({
+    enabled: true,
+    level: 1
+  }) : Chalk;
 }
 
 function highlight(code, options = {}) {
@@ -64023,27 +65264,21 @@ const joinCommand = (file, args = []) => {
 	return [file, ...args].join(' ');
 };
 
-// Allow spaces to be escaped by a backslash if not meant as a delimiter
-const handleEscaping = (tokens, token, index) => {
-	if (index === 0) {
-		return [token];
-	}
-
-	const previousToken = tokens[tokens.length - 1];
-
-	if (previousToken.endsWith('\\')) {
-		return [...tokens.slice(0, -1), `${previousToken.slice(0, -1)} ${token}`];
-	}
-
-	return [...tokens, token];
-};
-
 // Handle `execa.command()`
 const parseCommand = command => {
-	return command
-		.trim()
-		.split(SPACES_REGEXP)
-		.reduce(handleEscaping, []);
+	const tokens = [];
+	for (const token of command.trim().split(SPACES_REGEXP)) {
+		// Allow spaces to be escaped by a backslash if not meant as a delimiter
+		const previousToken = tokens[tokens.length - 1];
+		if (previousToken && previousToken.endsWith('\\')) {
+			// Merge previous token with current one
+			tokens[tokens.length - 1] = `${previousToken.slice(0, -1)} ${token}`;
+		} else {
+			tokens.push(token);
+		}
+	}
+
+	return tokens;
 };
 
 module.exports = {
@@ -64443,18 +65678,18 @@ function _interopDefault (ex) { return (ex && (typeof ex === 'object') && 'defau
 
 var endpoint = __webpack_require__(385);
 var universalUserAgent = __webpack_require__(796);
-var isPlainObject = _interopDefault(__webpack_require__(696));
+var isPlainObject = __webpack_require__(356);
 var nodeFetch = _interopDefault(__webpack_require__(454));
 var requestError = __webpack_require__(463);
 
-const VERSION = "5.4.7";
+const VERSION = "5.4.15";
 
 function getBufferResponse(response) {
   return response.arrayBuffer();
 }
 
 function fetchWrapper(requestOptions) {
-  if (isPlainObject(requestOptions.body) || Array.isArray(requestOptions.body)) {
+  if (isPlainObject.isPlainObject(requestOptions.body) || Array.isArray(requestOptions.body)) {
     requestOptions.body = JSON.stringify(requestOptions.body);
   }
 
@@ -64467,7 +65702,9 @@ function fetchWrapper(requestOptions) {
     body: requestOptions.body,
     headers: requestOptions.headers,
     redirect: requestOptions.redirect
-  }, requestOptions.request)).then(response => {
+  }, // `requestOptions.request.agent` type is incompatible
+  // see https://github.com/octokit/types.ts/pull/264
+  requestOptions.request)).then(response => {
     url = response.url;
     status = response.status;
 
@@ -64586,7 +65823,52 @@ exports.request = request;
 
 
 /***/ }),
-/* 754 */,
+/* 754 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const stringReplaceAll = (string, substring, replacer) => {
+	let index = string.indexOf(substring);
+	if (index === -1) {
+		return string;
+	}
+
+	const substringLength = substring.length;
+	let endIndex = 0;
+	let returnValue = '';
+	do {
+		returnValue += string.substr(endIndex, index - endIndex) + substring + replacer;
+		endIndex = index + substringLength;
+		index = string.indexOf(substring, endIndex);
+	} while (index !== -1);
+
+	returnValue += string.substr(endIndex);
+	return returnValue;
+};
+
+const stringEncaseCRLFWithFirstIndex = (string, prefix, postfix, index) => {
+	let endIndex = 0;
+	let returnValue = '';
+	do {
+		const gotCR = string[index - 1] === '\r';
+		returnValue += string.substr(endIndex, (gotCR ? index - 1 : index) - endIndex) + prefix + (gotCR ? '\r\n' : '\n') + postfix;
+		endIndex = index + 1;
+		index = string.indexOf('\n', endIndex);
+	} while (index !== -1);
+
+	returnValue += string.substr(endIndex);
+	return returnValue;
+};
+
+module.exports = {
+	stringReplaceAll,
+	stringEncaseCRLFWithFirstIndex
+};
+
+
+/***/ }),
 /* 755 */,
 /* 756 */,
 /* 757 */,
@@ -64827,6 +66109,68 @@ class EndError extends Error {
 	}
 }
 
+// The input can also be a promise, so we await it
+const testElement = async (element, tester) => tester(await element);
+
+// The input can also be a promise, so we `Promise.all()` them both
+const finder = async element => {
+	const values = await Promise.all(element);
+	if (values[1] === true) {
+		throw new EndError(values[0]);
+	}
+
+	return false;
+};
+
+const pLocate = async (iterable, tester, options) => {
+	options = {
+		concurrency: Infinity,
+		preserveOrder: true,
+		...options
+	};
+
+	const limit = pLimit(options.concurrency);
+
+	// Start all the promises concurrently with optional limit
+	const items = [...iterable].map(element => [element, limit(testElement, element, tester)]);
+
+	// Check the promises either serially or concurrently
+	const checkLimit = pLimit(options.preserveOrder ? 1 : Infinity);
+
+	try {
+		await Promise.all(items.map(element => checkLimit(finder, element)));
+	} catch (error) {
+		if (error instanceof EndError) {
+			return error.value;
+		}
+
+		throw error;
+	}
+};
+
+module.exports = pLocate;
+// TODO: Remove this for the next major release
+module.exports.default = pLocate;
+
+
+/***/ }),
+/* 768 */,
+/* 769 */,
+/* 770 */,
+/* 771 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const pLimit = __webpack_require__(678);
+
+class EndError extends Error {
+	constructor(value) {
+		super();
+		this.value = value;
+	}
+}
+
 // the input can also be a promise, so we `Promise.all()` them both
 const finder = el => Promise.all(el).then(val => val[1] === true && Promise.reject(new EndError(val[0])));
 
@@ -64851,10 +66195,6 @@ module.exports = (iterable, tester, opts) => {
 
 
 /***/ }),
-/* 768 */,
-/* 769 */,
-/* 770 */,
-/* 771 */,
 /* 772 */,
 /* 773 */,
 /* 774 */,
@@ -65931,6 +67271,14 @@ module.exports = class Parser {
   }
 
   /**
+   * Static Parse Inline Method
+   */
+  static parseInline(tokens, options) {
+    const parser = new Parser(options);
+    return parser.parseInline(tokens);
+  }
+
+  /**
    * Parse Loop
    */
   parse(tokens, top = true) {
@@ -66187,22 +67535,7 @@ module.exports = function (source) {
 
 
 /***/ }),
-/* 785 */
-/***/ (function(module) {
-
-"use strict";
-
-
-const pTry = (fn, ...arguments_) => new Promise(resolve => {
-	resolve(fn(...arguments_));
-});
-
-module.exports = pTry;
-// TODO: remove this in the next major version
-module.exports.default = pTry;
-
-
-/***/ }),
+/* 785 */,
 /* 786 */
 /***/ (function(__unusedmodule, exports, __webpack_require__) {
 
@@ -66570,12 +67903,12 @@ module.exports = ltr
 "use strict";
 
 
-var PlainValue = __webpack_require__(513);
 var parseCst = __webpack_require__(63);
-__webpack_require__(232);
-var Document$1 = __webpack_require__(192);
-var Schema = __webpack_require__(421);
-var warnings = __webpack_require__(626);
+var Document$1 = __webpack_require__(808);
+var Schema = __webpack_require__(481);
+var PlainValue = __webpack_require__(513);
+var warnings = __webpack_require__(287);
+__webpack_require__(329);
 
 function createNode(value, wrapScalars = true, tag) {
   if (tag === undefined && typeof wrapScalars === 'string') {
@@ -66774,144 +68107,7 @@ exports.getUserAgent = getUserAgent;
 
 /***/ }),
 /* 797 */,
-/* 798 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const os = __webpack_require__(87);
-const hasFlag = __webpack_require__(551);
-
-const env = process.env;
-
-let forceColor;
-if (hasFlag('no-color') ||
-	hasFlag('no-colors') ||
-	hasFlag('color=false')) {
-	forceColor = false;
-} else if (hasFlag('color') ||
-	hasFlag('colors') ||
-	hasFlag('color=true') ||
-	hasFlag('color=always')) {
-	forceColor = true;
-}
-if ('FORCE_COLOR' in env) {
-	forceColor = env.FORCE_COLOR.length === 0 || parseInt(env.FORCE_COLOR, 10) !== 0;
-}
-
-function translateLevel(level) {
-	if (level === 0) {
-		return false;
-	}
-
-	return {
-		level,
-		hasBasic: true,
-		has256: level >= 2,
-		has16m: level >= 3
-	};
-}
-
-function supportsColor(stream) {
-	if (forceColor === false) {
-		return 0;
-	}
-
-	if (hasFlag('color=16m') ||
-		hasFlag('color=full') ||
-		hasFlag('color=truecolor')) {
-		return 3;
-	}
-
-	if (hasFlag('color=256')) {
-		return 2;
-	}
-
-	if (stream && !stream.isTTY && forceColor !== true) {
-		return 0;
-	}
-
-	const min = forceColor ? 1 : 0;
-
-	if (process.platform === 'win32') {
-		// Node.js 7.5.0 is the first version of Node.js to include a patch to
-		// libuv that enables 256 color output on Windows. Anything earlier and it
-		// won't work. However, here we target Node.js 8 at minimum as it is an LTS
-		// release, and Node.js 7 is not. Windows 10 build 10586 is the first Windows
-		// release that supports 256 colors. Windows 10 build 14931 is the first release
-		// that supports 16m/TrueColor.
-		const osRelease = os.release().split('.');
-		if (
-			Number(process.versions.node.split('.')[0]) >= 8 &&
-			Number(osRelease[0]) >= 10 &&
-			Number(osRelease[2]) >= 10586
-		) {
-			return Number(osRelease[2]) >= 14931 ? 3 : 2;
-		}
-
-		return 1;
-	}
-
-	if ('CI' in env) {
-		if (['TRAVIS', 'CIRCLECI', 'APPVEYOR', 'GITLAB_CI'].some(sign => sign in env) || env.CI_NAME === 'codeship') {
-			return 1;
-		}
-
-		return min;
-	}
-
-	if ('TEAMCITY_VERSION' in env) {
-		return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
-	}
-
-	if (env.COLORTERM === 'truecolor') {
-		return 3;
-	}
-
-	if ('TERM_PROGRAM' in env) {
-		const version = parseInt((env.TERM_PROGRAM_VERSION || '').split('.')[0], 10);
-
-		switch (env.TERM_PROGRAM) {
-			case 'iTerm.app':
-				return version >= 3 ? 3 : 2;
-			case 'Apple_Terminal':
-				return 2;
-			// No default
-		}
-	}
-
-	if (/-256(color)?$/i.test(env.TERM)) {
-		return 2;
-	}
-
-	if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-		return 1;
-	}
-
-	if ('COLORTERM' in env) {
-		return 1;
-	}
-
-	if (env.TERM === 'dumb') {
-		return min;
-	}
-
-	return min;
-}
-
-function getSupportLevel(stream) {
-	const level = supportsColor(stream);
-	return translateLevel(level);
-}
-
-module.exports = {
-	supportsColor: getSupportLevel,
-	stdout: getSupportLevel(process.stdout),
-	stderr: getSupportLevel(process.stderr)
-};
-
-
-/***/ }),
+/* 798 */,
 /* 799 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -68244,7 +69440,7 @@ const parse = (input, options) => {
         output = token.close = `)$))${extglobStar}`;
       }
 
-      if (token.prev.type === 'bos' && eos()) {
+      if (token.prev.type === 'bos') {
         state.negatedExtglob = true;
       }
     }
@@ -69140,8 +70336,889 @@ module.exports = {
 
 
 /***/ }),
-/* 808 */,
-/* 809 */,
+/* 808 */
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+
+var PlainValue = __webpack_require__(513);
+var resolveSeq = __webpack_require__(329);
+var Schema = __webpack_require__(481);
+
+const defaultOptions = {
+  anchorPrefix: 'a',
+  customTags: null,
+  indent: 2,
+  indentSeq: true,
+  keepCstNodes: false,
+  keepNodeTypes: true,
+  keepBlobsInJSON: true,
+  mapAsMap: false,
+  maxAliasCount: 100,
+  prettyErrors: false,
+  // TODO Set true in v2
+  simpleKeys: false,
+  version: '1.2'
+};
+const scalarOptions = {
+  get binary() {
+    return resolveSeq.binaryOptions;
+  },
+
+  set binary(opt) {
+    Object.assign(resolveSeq.binaryOptions, opt);
+  },
+
+  get bool() {
+    return resolveSeq.boolOptions;
+  },
+
+  set bool(opt) {
+    Object.assign(resolveSeq.boolOptions, opt);
+  },
+
+  get int() {
+    return resolveSeq.intOptions;
+  },
+
+  set int(opt) {
+    Object.assign(resolveSeq.intOptions, opt);
+  },
+
+  get null() {
+    return resolveSeq.nullOptions;
+  },
+
+  set null(opt) {
+    Object.assign(resolveSeq.nullOptions, opt);
+  },
+
+  get str() {
+    return resolveSeq.strOptions;
+  },
+
+  set str(opt) {
+    Object.assign(resolveSeq.strOptions, opt);
+  }
+
+};
+const documentOptions = {
+  '1.0': {
+    schema: 'yaml-1.1',
+    merge: true,
+    tagPrefixes: [{
+      handle: '!',
+      prefix: PlainValue.defaultTagPrefix
+    }, {
+      handle: '!!',
+      prefix: 'tag:private.yaml.org,2002:'
+    }]
+  },
+  1.1: {
+    schema: 'yaml-1.1',
+    merge: true,
+    tagPrefixes: [{
+      handle: '!',
+      prefix: '!'
+    }, {
+      handle: '!!',
+      prefix: PlainValue.defaultTagPrefix
+    }]
+  },
+  1.2: {
+    schema: 'core',
+    merge: false,
+    tagPrefixes: [{
+      handle: '!',
+      prefix: '!'
+    }, {
+      handle: '!!',
+      prefix: PlainValue.defaultTagPrefix
+    }]
+  }
+};
+
+function stringifyTag(doc, tag) {
+  if ((doc.version || doc.options.version) === '1.0') {
+    const priv = tag.match(/^tag:private\.yaml\.org,2002:([^:/]+)$/);
+    if (priv) return '!' + priv[1];
+    const vocab = tag.match(/^tag:([a-zA-Z0-9-]+)\.yaml\.org,2002:(.*)/);
+    return vocab ? `!${vocab[1]}/${vocab[2]}` : `!${tag.replace(/^tag:/, '')}`;
+  }
+
+  let p = doc.tagPrefixes.find(p => tag.indexOf(p.prefix) === 0);
+
+  if (!p) {
+    const dtp = doc.getDefaults().tagPrefixes;
+    p = dtp && dtp.find(p => tag.indexOf(p.prefix) === 0);
+  }
+
+  if (!p) return tag[0] === '!' ? tag : `!<${tag}>`;
+  const suffix = tag.substr(p.prefix.length).replace(/[!,[\]{}]/g, ch => ({
+    '!': '%21',
+    ',': '%2C',
+    '[': '%5B',
+    ']': '%5D',
+    '{': '%7B',
+    '}': '%7D'
+  })[ch]);
+  return p.handle + suffix;
+}
+
+function getTagObject(tags, item) {
+  if (item instanceof resolveSeq.Alias) return resolveSeq.Alias;
+
+  if (item.tag) {
+    const match = tags.filter(t => t.tag === item.tag);
+    if (match.length > 0) return match.find(t => t.format === item.format) || match[0];
+  }
+
+  let tagObj, obj;
+
+  if (item instanceof resolveSeq.Scalar) {
+    obj = item.value; // TODO: deprecate/remove class check
+
+    const match = tags.filter(t => t.identify && t.identify(obj) || t.class && obj instanceof t.class);
+    tagObj = match.find(t => t.format === item.format) || match.find(t => !t.format);
+  } else {
+    obj = item;
+    tagObj = tags.find(t => t.nodeClass && obj instanceof t.nodeClass);
+  }
+
+  if (!tagObj) {
+    const name = obj && obj.constructor ? obj.constructor.name : typeof obj;
+    throw new Error(`Tag not resolved for ${name} value`);
+  }
+
+  return tagObj;
+} // needs to be called before value stringifier to allow for circular anchor refs
+
+
+function stringifyProps(node, tagObj, {
+  anchors,
+  doc
+}) {
+  const props = [];
+  const anchor = doc.anchors.getName(node);
+
+  if (anchor) {
+    anchors[anchor] = node;
+    props.push(`&${anchor}`);
+  }
+
+  if (node.tag) {
+    props.push(stringifyTag(doc, node.tag));
+  } else if (!tagObj.default) {
+    props.push(stringifyTag(doc, tagObj.tag));
+  }
+
+  return props.join(' ');
+}
+
+function stringify(item, ctx, onComment, onChompKeep) {
+  const {
+    anchors,
+    schema
+  } = ctx.doc;
+  let tagObj;
+
+  if (!(item instanceof resolveSeq.Node)) {
+    const createCtx = {
+      aliasNodes: [],
+      onTagObj: o => tagObj = o,
+      prevObjects: new Map()
+    };
+    item = schema.createNode(item, true, null, createCtx);
+
+    for (const alias of createCtx.aliasNodes) {
+      alias.source = alias.source.node;
+      let name = anchors.getName(alias.source);
+
+      if (!name) {
+        name = anchors.newName();
+        anchors.map[name] = alias.source;
+      }
+    }
+  }
+
+  if (item instanceof resolveSeq.Pair) return item.toString(ctx, onComment, onChompKeep);
+  if (!tagObj) tagObj = getTagObject(schema.tags, item);
+  const props = stringifyProps(item, tagObj, ctx);
+  if (props.length > 0) ctx.indentAtStart = (ctx.indentAtStart || 0) + props.length + 1;
+  const str = typeof tagObj.stringify === 'function' ? tagObj.stringify(item, ctx, onComment, onChompKeep) : item instanceof resolveSeq.Scalar ? resolveSeq.stringifyString(item, ctx, onComment, onChompKeep) : item.toString(ctx, onComment, onChompKeep);
+  if (!props) return str;
+  return item instanceof resolveSeq.Scalar || str[0] === '{' || str[0] === '[' ? `${props} ${str}` : `${props}\n${ctx.indent}${str}`;
+}
+
+class Anchors {
+  static validAnchorNode(node) {
+    return node instanceof resolveSeq.Scalar || node instanceof resolveSeq.YAMLSeq || node instanceof resolveSeq.YAMLMap;
+  }
+
+  constructor(prefix) {
+    PlainValue._defineProperty(this, "map", Object.create(null));
+
+    this.prefix = prefix;
+  }
+
+  createAlias(node, name) {
+    this.setAnchor(node, name);
+    return new resolveSeq.Alias(node);
+  }
+
+  createMergePair(...sources) {
+    const merge = new resolveSeq.Merge();
+    merge.value.items = sources.map(s => {
+      if (s instanceof resolveSeq.Alias) {
+        if (s.source instanceof resolveSeq.YAMLMap) return s;
+      } else if (s instanceof resolveSeq.YAMLMap) {
+        return this.createAlias(s);
+      }
+
+      throw new Error('Merge sources must be Map nodes or their Aliases');
+    });
+    return merge;
+  }
+
+  getName(node) {
+    const {
+      map
+    } = this;
+    return Object.keys(map).find(a => map[a] === node);
+  }
+
+  getNames() {
+    return Object.keys(this.map);
+  }
+
+  getNode(name) {
+    return this.map[name];
+  }
+
+  newName(prefix) {
+    if (!prefix) prefix = this.prefix;
+    const names = Object.keys(this.map);
+
+    for (let i = 1; true; ++i) {
+      const name = `${prefix}${i}`;
+      if (!names.includes(name)) return name;
+    }
+  } // During parsing, map & aliases contain CST nodes
+
+
+  resolveNodes() {
+    const {
+      map,
+      _cstAliases
+    } = this;
+    Object.keys(map).forEach(a => {
+      map[a] = map[a].resolved;
+    });
+
+    _cstAliases.forEach(a => {
+      a.source = a.source.resolved;
+    });
+
+    delete this._cstAliases;
+  }
+
+  setAnchor(node, name) {
+    if (node != null && !Anchors.validAnchorNode(node)) {
+      throw new Error('Anchors may only be set for Scalar, Seq and Map nodes');
+    }
+
+    if (name && /[\x00-\x19\s,[\]{}]/.test(name)) {
+      throw new Error('Anchor names must not contain whitespace or control characters');
+    }
+
+    const {
+      map
+    } = this;
+    const prev = node && Object.keys(map).find(a => map[a] === node);
+
+    if (prev) {
+      if (!name) {
+        return prev;
+      } else if (prev !== name) {
+        delete map[prev];
+        map[name] = node;
+      }
+    } else {
+      if (!name) {
+        if (!node) return null;
+        name = this.newName();
+      }
+
+      map[name] = node;
+    }
+
+    return name;
+  }
+
+}
+
+const visit = (node, tags) => {
+  if (node && typeof node === 'object') {
+    const {
+      tag
+    } = node;
+
+    if (node instanceof resolveSeq.Collection) {
+      if (tag) tags[tag] = true;
+      node.items.forEach(n => visit(n, tags));
+    } else if (node instanceof resolveSeq.Pair) {
+      visit(node.key, tags);
+      visit(node.value, tags);
+    } else if (node instanceof resolveSeq.Scalar) {
+      if (tag) tags[tag] = true;
+    }
+  }
+
+  return tags;
+};
+
+const listTagNames = node => Object.keys(visit(node, {}));
+
+function parseContents(doc, contents) {
+  const comments = {
+    before: [],
+    after: []
+  };
+  let body = undefined;
+  let spaceBefore = false;
+
+  for (const node of contents) {
+    if (node.valueRange) {
+      if (body !== undefined) {
+        const msg = 'Document contains trailing content not separated by a ... or --- line';
+        doc.errors.push(new PlainValue.YAMLSyntaxError(node, msg));
+        break;
+      }
+
+      const res = resolveSeq.resolveNode(doc, node);
+
+      if (spaceBefore) {
+        res.spaceBefore = true;
+        spaceBefore = false;
+      }
+
+      body = res;
+    } else if (node.comment !== null) {
+      const cc = body === undefined ? comments.before : comments.after;
+      cc.push(node.comment);
+    } else if (node.type === PlainValue.Type.BLANK_LINE) {
+      spaceBefore = true;
+
+      if (body === undefined && comments.before.length > 0 && !doc.commentBefore) {
+        // space-separated comments at start are parsed as document comments
+        doc.commentBefore = comments.before.join('\n');
+        comments.before = [];
+      }
+    }
+  }
+
+  doc.contents = body || null;
+
+  if (!body) {
+    doc.comment = comments.before.concat(comments.after).join('\n') || null;
+  } else {
+    const cb = comments.before.join('\n');
+
+    if (cb) {
+      const cbNode = body instanceof resolveSeq.Collection && body.items[0] ? body.items[0] : body;
+      cbNode.commentBefore = cbNode.commentBefore ? `${cb}\n${cbNode.commentBefore}` : cb;
+    }
+
+    doc.comment = comments.after.join('\n') || null;
+  }
+}
+
+function resolveTagDirective({
+  tagPrefixes
+}, directive) {
+  const [handle, prefix] = directive.parameters;
+
+  if (!handle || !prefix) {
+    const msg = 'Insufficient parameters given for %TAG directive';
+    throw new PlainValue.YAMLSemanticError(directive, msg);
+  }
+
+  if (tagPrefixes.some(p => p.handle === handle)) {
+    const msg = 'The %TAG directive must only be given at most once per handle in the same document.';
+    throw new PlainValue.YAMLSemanticError(directive, msg);
+  }
+
+  return {
+    handle,
+    prefix
+  };
+}
+
+function resolveYamlDirective(doc, directive) {
+  let [version] = directive.parameters;
+  if (directive.name === 'YAML:1.0') version = '1.0';
+
+  if (!version) {
+    const msg = 'Insufficient parameters given for %YAML directive';
+    throw new PlainValue.YAMLSemanticError(directive, msg);
+  }
+
+  if (!documentOptions[version]) {
+    const v0 = doc.version || doc.options.version;
+    const msg = `Document will be parsed as YAML ${v0} rather than YAML ${version}`;
+    doc.warnings.push(new PlainValue.YAMLWarning(directive, msg));
+  }
+
+  return version;
+}
+
+function parseDirectives(doc, directives, prevDoc) {
+  const directiveComments = [];
+  let hasDirectives = false;
+
+  for (const directive of directives) {
+    const {
+      comment,
+      name
+    } = directive;
+
+    switch (name) {
+      case 'TAG':
+        try {
+          doc.tagPrefixes.push(resolveTagDirective(doc, directive));
+        } catch (error) {
+          doc.errors.push(error);
+        }
+
+        hasDirectives = true;
+        break;
+
+      case 'YAML':
+      case 'YAML:1.0':
+        if (doc.version) {
+          const msg = 'The %YAML directive must only be given at most once per document.';
+          doc.errors.push(new PlainValue.YAMLSemanticError(directive, msg));
+        }
+
+        try {
+          doc.version = resolveYamlDirective(doc, directive);
+        } catch (error) {
+          doc.errors.push(error);
+        }
+
+        hasDirectives = true;
+        break;
+
+      default:
+        if (name) {
+          const msg = `YAML only supports %TAG and %YAML directives, and not %${name}`;
+          doc.warnings.push(new PlainValue.YAMLWarning(directive, msg));
+        }
+
+    }
+
+    if (comment) directiveComments.push(comment);
+  }
+
+  if (prevDoc && !hasDirectives && '1.1' === (doc.version || prevDoc.version || doc.options.version)) {
+    const copyTagPrefix = ({
+      handle,
+      prefix
+    }) => ({
+      handle,
+      prefix
+    });
+
+    doc.tagPrefixes = prevDoc.tagPrefixes.map(copyTagPrefix);
+    doc.version = prevDoc.version;
+  }
+
+  doc.commentBefore = directiveComments.join('\n') || null;
+}
+
+function assertCollection(contents) {
+  if (contents instanceof resolveSeq.Collection) return true;
+  throw new Error('Expected a YAML collection as document contents');
+}
+
+class Document {
+  constructor(options) {
+    this.anchors = new Anchors(options.anchorPrefix);
+    this.commentBefore = null;
+    this.comment = null;
+    this.contents = null;
+    this.directivesEndMarker = null;
+    this.errors = [];
+    this.options = options;
+    this.schema = null;
+    this.tagPrefixes = [];
+    this.version = null;
+    this.warnings = [];
+  }
+
+  add(value) {
+    assertCollection(this.contents);
+    return this.contents.add(value);
+  }
+
+  addIn(path, value) {
+    assertCollection(this.contents);
+    this.contents.addIn(path, value);
+  }
+
+  delete(key) {
+    assertCollection(this.contents);
+    return this.contents.delete(key);
+  }
+
+  deleteIn(path) {
+    if (resolveSeq.isEmptyPath(path)) {
+      if (this.contents == null) return false;
+      this.contents = null;
+      return true;
+    }
+
+    assertCollection(this.contents);
+    return this.contents.deleteIn(path);
+  }
+
+  getDefaults() {
+    return Document.defaults[this.version] || Document.defaults[this.options.version] || {};
+  }
+
+  get(key, keepScalar) {
+    return this.contents instanceof resolveSeq.Collection ? this.contents.get(key, keepScalar) : undefined;
+  }
+
+  getIn(path, keepScalar) {
+    if (resolveSeq.isEmptyPath(path)) return !keepScalar && this.contents instanceof resolveSeq.Scalar ? this.contents.value : this.contents;
+    return this.contents instanceof resolveSeq.Collection ? this.contents.getIn(path, keepScalar) : undefined;
+  }
+
+  has(key) {
+    return this.contents instanceof resolveSeq.Collection ? this.contents.has(key) : false;
+  }
+
+  hasIn(path) {
+    if (resolveSeq.isEmptyPath(path)) return this.contents !== undefined;
+    return this.contents instanceof resolveSeq.Collection ? this.contents.hasIn(path) : false;
+  }
+
+  set(key, value) {
+    assertCollection(this.contents);
+    this.contents.set(key, value);
+  }
+
+  setIn(path, value) {
+    if (resolveSeq.isEmptyPath(path)) this.contents = value;else {
+      assertCollection(this.contents);
+      this.contents.setIn(path, value);
+    }
+  }
+
+  setSchema(id, customTags) {
+    if (!id && !customTags && this.schema) return;
+    if (typeof id === 'number') id = id.toFixed(1);
+
+    if (id === '1.0' || id === '1.1' || id === '1.2') {
+      if (this.version) this.version = id;else this.options.version = id;
+      delete this.options.schema;
+    } else if (id && typeof id === 'string') {
+      this.options.schema = id;
+    }
+
+    if (Array.isArray(customTags)) this.options.customTags = customTags;
+    const opt = Object.assign({}, this.getDefaults(), this.options);
+    this.schema = new Schema.Schema(opt);
+  }
+
+  parse(node, prevDoc) {
+    if (this.options.keepCstNodes) this.cstNode = node;
+    if (this.options.keepNodeTypes) this.type = 'DOCUMENT';
+    const {
+      directives = [],
+      contents = [],
+      directivesEndMarker,
+      error,
+      valueRange
+    } = node;
+
+    if (error) {
+      if (!error.source) error.source = this;
+      this.errors.push(error);
+    }
+
+    parseDirectives(this, directives, prevDoc);
+    if (directivesEndMarker) this.directivesEndMarker = true;
+    this.range = valueRange ? [valueRange.start, valueRange.end] : null;
+    this.setSchema();
+    this.anchors._cstAliases = [];
+    parseContents(this, contents);
+    this.anchors.resolveNodes();
+
+    if (this.options.prettyErrors) {
+      for (const error of this.errors) if (error instanceof PlainValue.YAMLError) error.makePretty();
+
+      for (const warn of this.warnings) if (warn instanceof PlainValue.YAMLError) warn.makePretty();
+    }
+
+    return this;
+  }
+
+  listNonDefaultTags() {
+    return listTagNames(this.contents).filter(t => t.indexOf(Schema.Schema.defaultPrefix) !== 0);
+  }
+
+  setTagPrefix(handle, prefix) {
+    if (handle[0] !== '!' || handle[handle.length - 1] !== '!') throw new Error('Handle must start and end with !');
+
+    if (prefix) {
+      const prev = this.tagPrefixes.find(p => p.handle === handle);
+      if (prev) prev.prefix = prefix;else this.tagPrefixes.push({
+        handle,
+        prefix
+      });
+    } else {
+      this.tagPrefixes = this.tagPrefixes.filter(p => p.handle !== handle);
+    }
+  }
+
+  toJSON(arg, onAnchor) {
+    const {
+      keepBlobsInJSON,
+      mapAsMap,
+      maxAliasCount
+    } = this.options;
+    const keep = keepBlobsInJSON && (typeof arg !== 'string' || !(this.contents instanceof resolveSeq.Scalar));
+    const ctx = {
+      doc: this,
+      indentStep: '  ',
+      keep,
+      mapAsMap: keep && !!mapAsMap,
+      maxAliasCount,
+      stringify // Requiring directly in Pair would create circular dependencies
+
+    };
+    const anchorNames = Object.keys(this.anchors.map);
+    if (anchorNames.length > 0) ctx.anchors = new Map(anchorNames.map(name => [this.anchors.map[name], {
+      alias: [],
+      aliasCount: 0,
+      count: 1
+    }]));
+    const res = resolveSeq.toJSON(this.contents, arg, ctx);
+    if (typeof onAnchor === 'function' && ctx.anchors) for (const {
+      count,
+      res
+    } of ctx.anchors.values()) onAnchor(res, count);
+    return res;
+  }
+
+  toString() {
+    if (this.errors.length > 0) throw new Error('Document with errors cannot be stringified');
+    const indentSize = this.options.indent;
+
+    if (!Number.isInteger(indentSize) || indentSize <= 0) {
+      const s = JSON.stringify(indentSize);
+      throw new Error(`"indent" option must be a positive integer, not ${s}`);
+    }
+
+    this.setSchema();
+    const lines = [];
+    let hasDirectives = false;
+
+    if (this.version) {
+      let vd = '%YAML 1.2';
+
+      if (this.schema.name === 'yaml-1.1') {
+        if (this.version === '1.0') vd = '%YAML:1.0';else if (this.version === '1.1') vd = '%YAML 1.1';
+      }
+
+      lines.push(vd);
+      hasDirectives = true;
+    }
+
+    const tagNames = this.listNonDefaultTags();
+    this.tagPrefixes.forEach(({
+      handle,
+      prefix
+    }) => {
+      if (tagNames.some(t => t.indexOf(prefix) === 0)) {
+        lines.push(`%TAG ${handle} ${prefix}`);
+        hasDirectives = true;
+      }
+    });
+    if (hasDirectives || this.directivesEndMarker) lines.push('---');
+
+    if (this.commentBefore) {
+      if (hasDirectives || !this.directivesEndMarker) lines.unshift('');
+      lines.unshift(this.commentBefore.replace(/^/gm, '#'));
+    }
+
+    const ctx = {
+      anchors: Object.create(null),
+      doc: this,
+      indent: '',
+      indentStep: ' '.repeat(indentSize),
+      stringify // Requiring directly in nodes would create circular dependencies
+
+    };
+    let chompKeep = false;
+    let contentComment = null;
+
+    if (this.contents) {
+      if (this.contents instanceof resolveSeq.Node) {
+        if (this.contents.spaceBefore && (hasDirectives || this.directivesEndMarker)) lines.push('');
+        if (this.contents.commentBefore) lines.push(this.contents.commentBefore.replace(/^/gm, '#')); // top-level block scalars need to be indented if followed by a comment
+
+        ctx.forceBlockIndent = !!this.comment;
+        contentComment = this.contents.comment;
+      }
+
+      const onChompKeep = contentComment ? null : () => chompKeep = true;
+      const body = stringify(this.contents, ctx, () => contentComment = null, onChompKeep);
+      lines.push(resolveSeq.addComment(body, '', contentComment));
+    } else if (this.contents !== undefined) {
+      lines.push(stringify(this.contents, ctx));
+    }
+
+    if (this.comment) {
+      if ((!chompKeep || contentComment) && lines[lines.length - 1] !== '') lines.push('');
+      lines.push(this.comment.replace(/^/gm, '#'));
+    }
+
+    return lines.join('\n') + '\n';
+  }
+
+}
+
+PlainValue._defineProperty(Document, "defaults", documentOptions);
+
+exports.Document = Document;
+exports.defaultOptions = defaultOptions;
+exports.scalarOptions = scalarOptions;
+
+
+/***/ }),
+/* 809 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const os = __webpack_require__(87);
+const onExit = __webpack_require__(497);
+
+const DEFAULT_FORCE_KILL_TIMEOUT = 1000 * 5;
+
+// Monkey-patches `childProcess.kill()` to add `forceKillAfterTimeout` behavior
+const spawnedKill = (kill, signal = 'SIGTERM', options = {}) => {
+	const killResult = kill(signal);
+	setKillTimeout(kill, signal, options, killResult);
+	return killResult;
+};
+
+const setKillTimeout = (kill, signal, options, killResult) => {
+	if (!shouldForceKill(signal, options, killResult)) {
+		return;
+	}
+
+	const timeout = getForceKillAfterTimeout(options);
+	const t = setTimeout(() => {
+		kill('SIGKILL');
+	}, timeout);
+
+	// Guarded because there's no `.unref()` when `execa` is used in the renderer
+	// process in Electron. This cannot be tested since we don't run tests in
+	// Electron.
+	// istanbul ignore else
+	if (t.unref) {
+		t.unref();
+	}
+};
+
+const shouldForceKill = (signal, {forceKillAfterTimeout}, killResult) => {
+	return isSigterm(signal) && forceKillAfterTimeout !== false && killResult;
+};
+
+const isSigterm = signal => {
+	return signal === os.constants.signals.SIGTERM ||
+		(typeof signal === 'string' && signal.toUpperCase() === 'SIGTERM');
+};
+
+const getForceKillAfterTimeout = ({forceKillAfterTimeout = true}) => {
+	if (forceKillAfterTimeout === true) {
+		return DEFAULT_FORCE_KILL_TIMEOUT;
+	}
+
+	if (!Number.isFinite(forceKillAfterTimeout) || forceKillAfterTimeout < 0) {
+		throw new TypeError(`Expected the \`forceKillAfterTimeout\` option to be a non-negative integer, got \`${forceKillAfterTimeout}\` (${typeof forceKillAfterTimeout})`);
+	}
+
+	return forceKillAfterTimeout;
+};
+
+// `childProcess.cancel()`
+const spawnedCancel = (spawned, context) => {
+	const killResult = spawned.kill();
+
+	if (killResult) {
+		context.isCanceled = true;
+	}
+};
+
+const timeoutKill = (spawned, signal, reject) => {
+	spawned.kill(signal);
+	reject(Object.assign(new Error('Timed out'), {timedOut: true, signal}));
+};
+
+// `timeout` option handling
+const setupTimeout = (spawned, {timeout, killSignal = 'SIGTERM'}, spawnedPromise) => {
+	if (timeout === 0 || timeout === undefined) {
+		return spawnedPromise;
+	}
+
+	if (!Number.isFinite(timeout) || timeout < 0) {
+		throw new TypeError(`Expected the \`timeout\` option to be a non-negative integer, got \`${timeout}\` (${typeof timeout})`);
+	}
+
+	let timeoutId;
+	const timeoutPromise = new Promise((resolve, reject) => {
+		timeoutId = setTimeout(() => {
+			timeoutKill(spawned, killSignal, reject);
+		}, timeout);
+	});
+
+	const safeSpawnedPromise = spawnedPromise.finally(() => {
+		clearTimeout(timeoutId);
+	});
+
+	return Promise.race([timeoutPromise, safeSpawnedPromise]);
+};
+
+// `cleanup` option handling
+const setExitHandler = async (spawned, {cleanup, detached}, timedPromise) => {
+	if (!cleanup || detached) {
+		return timedPromise;
+	}
+
+	const removeExitHandler = onExit(() => {
+		spawned.kill();
+	});
+
+	return timedPromise.finally(() => {
+		removeExitHandler();
+	});
+};
+
+module.exports = {
+	spawnedKill,
+	spawnedCancel,
+	setupTimeout,
+	setExitHandler
+};
+
+
+/***/ }),
 /* 810 */,
 /* 811 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -69576,7 +71653,7 @@ module.exports = diff
 "use strict";
 
 
-module.exports = __webpack_require__(366);
+module.exports = __webpack_require__(1);
 
 
 /***/ }),
@@ -69642,7 +71719,7 @@ util.inherits = __webpack_require__(689);
 /*</replacement>*/
 
 var Readable = __webpack_require__(226);
-var Writable = __webpack_require__(27);
+var Writable = __webpack_require__(241);
 
 util.inherits(Duplex, Readable);
 
@@ -69726,52 +71803,7 @@ Duplex.prototype._destroy = function (err, cb) {
 
 /***/ }),
 /* 832 */,
-/* 833 */
-/***/ (function(module) {
-
-"use strict";
-
-
-const stringReplaceAll = (string, substring, replacer) => {
-	let index = string.indexOf(substring);
-	if (index === -1) {
-		return string;
-	}
-
-	const substringLength = substring.length;
-	let endIndex = 0;
-	let returnValue = '';
-	do {
-		returnValue += string.substr(endIndex, index - endIndex) + substring + replacer;
-		endIndex = index + substringLength;
-		index = string.indexOf(substring, endIndex);
-	} while (index !== -1);
-
-	returnValue += string.substr(endIndex);
-	return returnValue;
-};
-
-const stringEncaseCRLFWithFirstIndex = (string, prefix, postfix, index) => {
-	let endIndex = 0;
-	let returnValue = '';
-	do {
-		const gotCR = string[index - 1] === '\r';
-		returnValue += string.substr(endIndex, (gotCR ? index - 1 : index) - endIndex) + prefix + (gotCR ? '\r\n' : '\n') + postfix;
-		endIndex = index + 1;
-		index = string.indexOf('\n', endIndex);
-	} while (index !== -1);
-
-	returnValue += string.substr(endIndex);
-	return returnValue;
-};
-
-module.exports = {
-	stringReplaceAll,
-	stringEncaseCRLFWithFirstIndex
-};
-
-
-/***/ }),
+/* 833 */,
 /* 834 */,
 /* 835 */
 /***/ (function(module) {
@@ -69895,10 +71927,60 @@ module.exports = function (fromModel) {
 
 Object.defineProperty(exports, '__esModule', { value: true });
 
+function _defineProperty(obj, key, value) {
+  if (key in obj) {
+    Object.defineProperty(obj, key, {
+      value: value,
+      enumerable: true,
+      configurable: true,
+      writable: true
+    });
+  } else {
+    obj[key] = value;
+  }
+
+  return obj;
+}
+
+function ownKeys(object, enumerableOnly) {
+  var keys = Object.keys(object);
+
+  if (Object.getOwnPropertySymbols) {
+    var symbols = Object.getOwnPropertySymbols(object);
+    if (enumerableOnly) symbols = symbols.filter(function (sym) {
+      return Object.getOwnPropertyDescriptor(object, sym).enumerable;
+    });
+    keys.push.apply(keys, symbols);
+  }
+
+  return keys;
+}
+
+function _objectSpread2(target) {
+  for (var i = 1; i < arguments.length; i++) {
+    var source = arguments[i] != null ? arguments[i] : {};
+
+    if (i % 2) {
+      ownKeys(Object(source), true).forEach(function (key) {
+        _defineProperty(target, key, source[key]);
+      });
+    } else if (Object.getOwnPropertyDescriptors) {
+      Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+    } else {
+      ownKeys(Object(source)).forEach(function (key) {
+        Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+      });
+    }
+  }
+
+  return target;
+}
+
 const Endpoints = {
   actions: {
     addSelectedRepoToOrgSecret: ["PUT /orgs/{org}/actions/secrets/{secret_name}/repositories/{repository_id}"],
     cancelWorkflowRun: ["POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel"],
+    createOrUpdateEnvironmentSecret: ["PUT /repositories/{repository_id}/environments/{environment_name}/secrets/{secret_name}"],
     createOrUpdateOrgSecret: ["PUT /orgs/{org}/actions/secrets/{secret_name}"],
     createOrUpdateRepoSecret: ["PUT /repos/{owner}/{repo}/actions/secrets/{secret_name}"],
     createRegistrationTokenForOrg: ["POST /orgs/{org}/actions/runners/registration-token"],
@@ -69907,21 +71989,37 @@ const Endpoints = {
     createRemoveTokenForRepo: ["POST /repos/{owner}/{repo}/actions/runners/remove-token"],
     createWorkflowDispatch: ["POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"],
     deleteArtifact: ["DELETE /repos/{owner}/{repo}/actions/artifacts/{artifact_id}"],
+    deleteEnvironmentSecret: ["DELETE /repositories/{repository_id}/environments/{environment_name}/secrets/{secret_name}"],
     deleteOrgSecret: ["DELETE /orgs/{org}/actions/secrets/{secret_name}"],
     deleteRepoSecret: ["DELETE /repos/{owner}/{repo}/actions/secrets/{secret_name}"],
     deleteSelfHostedRunnerFromOrg: ["DELETE /orgs/{org}/actions/runners/{runner_id}"],
     deleteSelfHostedRunnerFromRepo: ["DELETE /repos/{owner}/{repo}/actions/runners/{runner_id}"],
     deleteWorkflowRun: ["DELETE /repos/{owner}/{repo}/actions/runs/{run_id}"],
     deleteWorkflowRunLogs: ["DELETE /repos/{owner}/{repo}/actions/runs/{run_id}/logs"],
+    disableSelectedRepositoryGithubActionsOrganization: ["DELETE /orgs/{org}/actions/permissions/repositories/{repository_id}"],
+    disableWorkflow: ["PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/disable"],
     downloadArtifact: ["GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}"],
     downloadJobLogsForWorkflowRun: ["GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs"],
     downloadWorkflowRunLogs: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/logs"],
+    enableSelectedRepositoryGithubActionsOrganization: ["PUT /orgs/{org}/actions/permissions/repositories/{repository_id}"],
+    enableWorkflow: ["PUT /repos/{owner}/{repo}/actions/workflows/{workflow_id}/enable"],
+    getAllowedActionsOrganization: ["GET /orgs/{org}/actions/permissions/selected-actions"],
+    getAllowedActionsRepository: ["GET /repos/{owner}/{repo}/actions/permissions/selected-actions"],
     getArtifact: ["GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}"],
+    getEnvironmentPublicKey: ["GET /repositories/{repository_id}/environments/{environment_name}/secrets/public-key"],
+    getEnvironmentSecret: ["GET /repositories/{repository_id}/environments/{environment_name}/secrets/{secret_name}"],
+    getGithubActionsPermissionsOrganization: ["GET /orgs/{org}/actions/permissions"],
+    getGithubActionsPermissionsRepository: ["GET /repos/{owner}/{repo}/actions/permissions"],
     getJobForWorkflowRun: ["GET /repos/{owner}/{repo}/actions/jobs/{job_id}"],
     getOrgPublicKey: ["GET /orgs/{org}/actions/secrets/public-key"],
     getOrgSecret: ["GET /orgs/{org}/actions/secrets/{secret_name}"],
+    getPendingDeploymentsForRun: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments"],
+    getRepoPermissions: ["GET /repos/{owner}/{repo}/actions/permissions", {}, {
+      renamed: ["actions", "getGithubActionsPermissionsRepository"]
+    }],
     getRepoPublicKey: ["GET /repos/{owner}/{repo}/actions/secrets/public-key"],
     getRepoSecret: ["GET /repos/{owner}/{repo}/actions/secrets/{secret_name}"],
+    getReviewsForRun: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/approvals"],
     getSelfHostedRunnerForOrg: ["GET /orgs/{org}/actions/runners/{runner_id}"],
     getSelfHostedRunnerForRepo: ["GET /repos/{owner}/{repo}/actions/runners/{runner_id}"],
     getWorkflow: ["GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}"],
@@ -69929,6 +72027,7 @@ const Endpoints = {
     getWorkflowRunUsage: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/timing"],
     getWorkflowUsage: ["GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/timing"],
     listArtifactsForRepo: ["GET /repos/{owner}/{repo}/actions/artifacts"],
+    listEnvironmentSecrets: ["GET /repositories/{repository_id}/environments/{environment_name}/secrets"],
     listJobsForWorkflowRun: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs"],
     listOrgSecrets: ["GET /orgs/{org}/actions/secrets"],
     listRepoSecrets: ["GET /repos/{owner}/{repo}/actions/secrets"],
@@ -69936,6 +72035,7 @@ const Endpoints = {
     listRunnerApplicationsForOrg: ["GET /orgs/{org}/actions/runners/downloads"],
     listRunnerApplicationsForRepo: ["GET /repos/{owner}/{repo}/actions/runners/downloads"],
     listSelectedReposForOrgSecret: ["GET /orgs/{org}/actions/secrets/{secret_name}/repositories"],
+    listSelectedRepositoriesEnabledGithubActionsOrganization: ["GET /orgs/{org}/actions/permissions/repositories"],
     listSelfHostedRunnersForOrg: ["GET /orgs/{org}/actions/runners"],
     listSelfHostedRunnersForRepo: ["GET /repos/{owner}/{repo}/actions/runners"],
     listWorkflowRunArtifacts: ["GET /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts"],
@@ -69943,7 +72043,13 @@ const Endpoints = {
     listWorkflowRunsForRepo: ["GET /repos/{owner}/{repo}/actions/runs"],
     reRunWorkflow: ["POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun"],
     removeSelectedRepoFromOrgSecret: ["DELETE /orgs/{org}/actions/secrets/{secret_name}/repositories/{repository_id}"],
-    setSelectedReposForOrgSecret: ["PUT /orgs/{org}/actions/secrets/{secret_name}/repositories"]
+    reviewPendingDeploymentsForRun: ["POST /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments"],
+    setAllowedActionsOrganization: ["PUT /orgs/{org}/actions/permissions/selected-actions"],
+    setAllowedActionsRepository: ["PUT /repos/{owner}/{repo}/actions/permissions/selected-actions"],
+    setGithubActionsPermissionsOrganization: ["PUT /orgs/{org}/actions/permissions"],
+    setGithubActionsPermissionsRepository: ["PUT /repos/{owner}/{repo}/actions/permissions"],
+    setSelectedReposForOrgSecret: ["PUT /orgs/{org}/actions/secrets/{secret_name}/repositories"],
+    setSelectedRepositoriesEnabledGithubActionsOrganization: ["PUT /orgs/{org}/actions/permissions/repositories"]
   },
   activity: {
     checkRepoIsStarredByAuthenticatedUser: ["GET /user/starred/{owner}/{repo}"],
@@ -69979,11 +72085,7 @@ const Endpoints = {
     unstarRepoForAuthenticatedUser: ["DELETE /user/starred/{owner}/{repo}"]
   },
   apps: {
-    addRepoToInstallation: ["PUT /user/installations/{installation_id}/repositories/{repository_id}", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    addRepoToInstallation: ["PUT /user/installations/{installation_id}/repositories/{repository_id}"],
     checkToken: ["POST /applications/{client_id}/token"],
     createContentAttachment: ["POST /content_references/{content_reference_id}/attachments", {
       mediaType: {
@@ -69991,85 +72093,36 @@ const Endpoints = {
       }
     }],
     createFromManifest: ["POST /app-manifests/{code}/conversions"],
-    createInstallationAccessToken: ["POST /app/installations/{installation_id}/access_tokens", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    createInstallationAccessToken: ["POST /app/installations/{installation_id}/access_tokens"],
     deleteAuthorization: ["DELETE /applications/{client_id}/grant"],
-    deleteInstallation: ["DELETE /app/installations/{installation_id}", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    deleteInstallation: ["DELETE /app/installations/{installation_id}"],
     deleteToken: ["DELETE /applications/{client_id}/token"],
-    getAuthenticated: ["GET /app", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    getBySlug: ["GET /apps/{app_slug}", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    getInstallation: ["GET /app/installations/{installation_id}", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    getOrgInstallation: ["GET /orgs/{org}/installation", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    getRepoInstallation: ["GET /repos/{owner}/{repo}/installation", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    getAuthenticated: ["GET /app"],
+    getBySlug: ["GET /apps/{app_slug}"],
+    getInstallation: ["GET /app/installations/{installation_id}"],
+    getOrgInstallation: ["GET /orgs/{org}/installation"],
+    getRepoInstallation: ["GET /repos/{owner}/{repo}/installation"],
     getSubscriptionPlanForAccount: ["GET /marketplace_listing/accounts/{account_id}"],
     getSubscriptionPlanForAccountStubbed: ["GET /marketplace_listing/stubbed/accounts/{account_id}"],
-    getUserInstallation: ["GET /users/{username}/installation", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    getUserInstallation: ["GET /users/{username}/installation"],
+    getWebhookConfigForApp: ["GET /app/hook/config"],
     listAccountsForPlan: ["GET /marketplace_listing/plans/{plan_id}/accounts"],
     listAccountsForPlanStubbed: ["GET /marketplace_listing/stubbed/plans/{plan_id}/accounts"],
-    listInstallationReposForAuthenticatedUser: ["GET /user/installations/{installation_id}/repositories", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    listInstallations: ["GET /app/installations", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
-    listInstallationsForAuthenticatedUser: ["GET /user/installations", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    listInstallationReposForAuthenticatedUser: ["GET /user/installations/{installation_id}/repositories"],
+    listInstallations: ["GET /app/installations"],
+    listInstallationsForAuthenticatedUser: ["GET /user/installations"],
     listPlans: ["GET /marketplace_listing/plans"],
     listPlansStubbed: ["GET /marketplace_listing/stubbed/plans"],
-    listReposAccessibleToInstallation: ["GET /installation/repositories", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    listReposAccessibleToInstallation: ["GET /installation/repositories"],
     listSubscriptionsForAuthenticatedUser: ["GET /user/marketplace_purchases"],
     listSubscriptionsForAuthenticatedUserStubbed: ["GET /user/marketplace_purchases/stubbed"],
-    removeRepoFromInstallation: ["DELETE /user/installations/{installation_id}/repositories/{repository_id}", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    removeRepoFromInstallation: ["DELETE /user/installations/{installation_id}/repositories/{repository_id}"],
     resetToken: ["PATCH /applications/{client_id}/token"],
     revokeInstallationAccessToken: ["DELETE /installation/token"],
+    scopeToken: ["POST /applications/{client_id}/token/scoped"],
     suspendInstallation: ["PUT /app/installations/{installation_id}/suspended"],
-    unsuspendInstallation: ["DELETE /app/installations/{installation_id}/suspended"]
+    unsuspendInstallation: ["DELETE /app/installations/{installation_id}/suspended"],
+    updateWebhookConfigForApp: ["PATCH /app/hook/config"]
   },
   billing: {
     getGithubActionsBillingOrg: ["GET /orgs/{org}/settings/billing/actions"],
@@ -70080,65 +72133,32 @@ const Endpoints = {
     getSharedStorageBillingUser: ["GET /users/{username}/settings/billing/shared-storage"]
   },
   checks: {
-    create: ["POST /repos/{owner}/{repo}/check-runs", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    createSuite: ["POST /repos/{owner}/{repo}/check-suites", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    get: ["GET /repos/{owner}/{repo}/check-runs/{check_run_id}", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    getSuite: ["GET /repos/{owner}/{repo}/check-suites/{check_suite_id}", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    listAnnotations: ["GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    listForRef: ["GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    listForSuite: ["GET /repos/{owner}/{repo}/check-suites/{check_suite_id}/check-runs", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    listSuitesForRef: ["GET /repos/{owner}/{repo}/commits/{ref}/check-suites", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    rerequestSuite: ["POST /repos/{owner}/{repo}/check-suites/{check_suite_id}/rerequest", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    setSuitesPreferences: ["PATCH /repos/{owner}/{repo}/check-suites/preferences", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }],
-    update: ["PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}", {
-      mediaType: {
-        previews: ["antiope"]
-      }
-    }]
+    create: ["POST /repos/{owner}/{repo}/check-runs"],
+    createSuite: ["POST /repos/{owner}/{repo}/check-suites"],
+    get: ["GET /repos/{owner}/{repo}/check-runs/{check_run_id}"],
+    getSuite: ["GET /repos/{owner}/{repo}/check-suites/{check_suite_id}"],
+    listAnnotations: ["GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations"],
+    listForRef: ["GET /repos/{owner}/{repo}/commits/{ref}/check-runs"],
+    listForSuite: ["GET /repos/{owner}/{repo}/check-suites/{check_suite_id}/check-runs"],
+    listSuitesForRef: ["GET /repos/{owner}/{repo}/commits/{ref}/check-suites"],
+    rerequestSuite: ["POST /repos/{owner}/{repo}/check-suites/{check_suite_id}/rerequest"],
+    setSuitesPreferences: ["PATCH /repos/{owner}/{repo}/check-suites/preferences"],
+    update: ["PATCH /repos/{owner}/{repo}/check-runs/{check_run_id}"]
   },
   codeScanning: {
-    getAlert: ["GET /repos/{owner}/{repo}/code-scanning/alerts/{alert_id}"],
-    listAlertsForRepo: ["GET /repos/{owner}/{repo}/code-scanning/alerts"]
+    deleteAnalysis: ["DELETE /repos/{owner}/{repo}/code-scanning/analyses/{analysis_id}{?confirm_delete}"],
+    getAlert: ["GET /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}", {}, {
+      renamedParameters: {
+        alert_id: "alert_number"
+      }
+    }],
+    getAnalysis: ["GET /repos/{owner}/{repo}/code-scanning/analyses/{analysis_id}"],
+    getSarif: ["GET /repos/{owner}/{repo}/code-scanning/sarifs/{sarif_id}"],
+    listAlertsForRepo: ["GET /repos/{owner}/{repo}/code-scanning/alerts"],
+    listAlertsInstances: ["GET /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/instances"],
+    listRecentAnalyses: ["GET /repos/{owner}/{repo}/code-scanning/analyses"],
+    updateAlert: ["PATCH /repos/{owner}/{repo}/code-scanning/alerts/{alert_number}"],
+    uploadSarif: ["POST /repos/{owner}/{repo}/code-scanning/sarifs"]
   },
   codesOfConduct: {
     getAllCodesOfConduct: ["GET /codes_of_conduct", {
@@ -70159,6 +72179,16 @@ const Endpoints = {
   },
   emojis: {
     get: ["GET /emojis"]
+  },
+  enterpriseAdmin: {
+    disableSelectedOrganizationGithubActionsEnterprise: ["DELETE /enterprises/{enterprise}/actions/permissions/organizations/{org_id}"],
+    enableSelectedOrganizationGithubActionsEnterprise: ["PUT /enterprises/{enterprise}/actions/permissions/organizations/{org_id}"],
+    getAllowedActionsEnterprise: ["GET /enterprises/{enterprise}/actions/permissions/selected-actions"],
+    getGithubActionsPermissionsEnterprise: ["GET /enterprises/{enterprise}/actions/permissions"],
+    listSelectedOrganizationsEnabledGithubActionsEnterprise: ["GET /enterprises/{enterprise}/actions/permissions/organizations"],
+    setAllowedActionsEnterprise: ["PUT /enterprises/{enterprise}/actions/permissions/selected-actions"],
+    setGithubActionsPermissionsEnterprise: ["PUT /enterprises/{enterprise}/actions/permissions"],
+    setSelectedOrganizationsEnabledGithubActionsEnterprise: ["PUT /enterprises/{enterprise}/actions/permissions/organizations"]
   },
   gists: {
     checkIsStarred: ["GET /gists/{gist_id}/star"],
@@ -70202,35 +72232,23 @@ const Endpoints = {
     getTemplate: ["GET /gitignore/templates/{name}"]
   },
   interactions: {
-    getRestrictionsForOrg: ["GET /orgs/{org}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
+    getRestrictionsForAuthenticatedUser: ["GET /user/interaction-limits"],
+    getRestrictionsForOrg: ["GET /orgs/{org}/interaction-limits"],
+    getRestrictionsForRepo: ["GET /repos/{owner}/{repo}/interaction-limits"],
+    getRestrictionsForYourPublicRepos: ["GET /user/interaction-limits", {}, {
+      renamed: ["interactions", "getRestrictionsForAuthenticatedUser"]
     }],
-    getRestrictionsForRepo: ["GET /repos/{owner}/{repo}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
+    removeRestrictionsForAuthenticatedUser: ["DELETE /user/interaction-limits"],
+    removeRestrictionsForOrg: ["DELETE /orgs/{org}/interaction-limits"],
+    removeRestrictionsForRepo: ["DELETE /repos/{owner}/{repo}/interaction-limits"],
+    removeRestrictionsForYourPublicRepos: ["DELETE /user/interaction-limits", {}, {
+      renamed: ["interactions", "removeRestrictionsForAuthenticatedUser"]
     }],
-    removeRestrictionsForOrg: ["DELETE /orgs/{org}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
-    }],
-    removeRestrictionsForRepo: ["DELETE /repos/{owner}/{repo}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
-    }],
-    setRestrictionsForOrg: ["PUT /orgs/{org}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
-    }],
-    setRestrictionsForRepo: ["PUT /repos/{owner}/{repo}/interaction-limits", {
-      mediaType: {
-        previews: ["sombra"]
-      }
+    setRestrictionsForAuthenticatedUser: ["PUT /user/interaction-limits"],
+    setRestrictionsForOrg: ["PUT /orgs/{org}/interaction-limits"],
+    setRestrictionsForRepo: ["PUT /repos/{owner}/{repo}/interaction-limits"],
+    setRestrictionsForYourPublicRepos: ["PUT /user/interaction-limits", {}, {
+      renamed: ["interactions", "setRestrictionsForAuthenticatedUser"]
     }]
   },
   issues: {
@@ -70292,7 +72310,10 @@ const Endpoints = {
     }]
   },
   meta: {
-    get: ["GET /meta"]
+    get: ["GET /meta"],
+    getOctocat: ["GET /octocat"],
+    getZen: ["GET /zen"],
+    root: ["GET /"]
   },
   migrations: {
     cancelImport: ["DELETE /repos/{owner}/{repo}/import"],
@@ -70368,6 +72389,7 @@ const Endpoints = {
   },
   orgs: {
     blockUser: ["PUT /orgs/{org}/blocks/{username}"],
+    cancelInvitation: ["DELETE /orgs/{org}/invitations/{invitation_id}"],
     checkBlockedUser: ["GET /orgs/{org}/blocks/{username}"],
     checkMembershipForUser: ["GET /orgs/{org}/members/{username}"],
     checkPublicMembershipForUser: ["GET /orgs/{org}/public_members/{username}"],
@@ -70379,13 +72401,11 @@ const Endpoints = {
     getMembershipForAuthenticatedUser: ["GET /user/memberships/orgs/{org}"],
     getMembershipForUser: ["GET /orgs/{org}/memberships/{username}"],
     getWebhook: ["GET /orgs/{org}/hooks/{hook_id}"],
+    getWebhookConfigForOrg: ["GET /orgs/{org}/hooks/{hook_id}/config"],
     list: ["GET /organizations"],
-    listAppInstallations: ["GET /orgs/{org}/installations", {
-      mediaType: {
-        previews: ["machine-man"]
-      }
-    }],
+    listAppInstallations: ["GET /orgs/{org}/installations"],
     listBlockedUsers: ["GET /orgs/{org}/blocks"],
+    listFailedInvitations: ["GET /orgs/{org}/failed_invitations"],
     listForAuthenticatedUser: ["GET /user/orgs"],
     listForUser: ["GET /users/{username}/orgs"],
     listInvitationTeams: ["GET /orgs/{org}/invitations/{invitation_id}/teams"],
@@ -70405,7 +72425,33 @@ const Endpoints = {
     unblockUser: ["DELETE /orgs/{org}/blocks/{username}"],
     update: ["PATCH /orgs/{org}"],
     updateMembershipForAuthenticatedUser: ["PATCH /user/memberships/orgs/{org}"],
-    updateWebhook: ["PATCH /orgs/{org}/hooks/{hook_id}"]
+    updateWebhook: ["PATCH /orgs/{org}/hooks/{hook_id}"],
+    updateWebhookConfigForOrg: ["PATCH /orgs/{org}/hooks/{hook_id}/config"]
+  },
+  packages: {
+    deletePackageForAuthenticatedUser: ["DELETE /user/packages/{package_type}/{package_name}"],
+    deletePackageForOrg: ["DELETE /orgs/{org}/packages/{package_type}/{package_name}"],
+    deletePackageVersionForAuthenticatedUser: ["DELETE /user/packages/{package_type}/{package_name}/versions/{package_version_id}"],
+    deletePackageVersionForOrg: ["DELETE /orgs/{org}/packages/{package_type}/{package_name}/versions/{package_version_id}"],
+    getAllPackageVersionsForAPackageOwnedByAnOrg: ["GET /orgs/{org}/packages/{package_type}/{package_name}/versions", {}, {
+      renamed: ["packages", "getAllPackageVersionsForPackageOwnedByOrg"]
+    }],
+    getAllPackageVersionsForAPackageOwnedByTheAuthenticatedUser: ["GET /user/packages/{package_type}/{package_name}/versions", {}, {
+      renamed: ["packages", "getAllPackageVersionsForPackageOwnedByAuthenticatedUser"]
+    }],
+    getAllPackageVersionsForPackageOwnedByAuthenticatedUser: ["GET /user/packages/{package_type}/{package_name}/versions"],
+    getAllPackageVersionsForPackageOwnedByOrg: ["GET /orgs/{org}/packages/{package_type}/{package_name}/versions"],
+    getAllPackageVersionsForPackageOwnedByUser: ["GET /users/{username}/packages/{package_type}/{package_name}/versions"],
+    getPackageForAuthenticatedUser: ["GET /user/packages/{package_type}/{package_name}"],
+    getPackageForOrganization: ["GET /orgs/{org}/packages/{package_type}/{package_name}"],
+    getPackageForUser: ["GET /users/{username}/packages/{package_type}/{package_name}"],
+    getPackageVersionForAuthenticatedUser: ["GET /user/packages/{package_type}/{package_name}/versions/{package_version_id}"],
+    getPackageVersionForOrganization: ["GET /orgs/{org}/packages/{package_type}/{package_name}/versions/{package_version_id}"],
+    getPackageVersionForUser: ["GET /users/{username}/packages/{package_type}/{package_name}/versions/{package_version_id}"],
+    restorePackageForAuthenticatedUser: ["POST /user/packages/{package_type}/{package_name}/restore{?token}"],
+    restorePackageForOrg: ["POST /orgs/{org}/packages/{package_type}/{package_name}/restore{?token}"],
+    restorePackageVersionForAuthenticatedUser: ["POST /user/packages/{package_type}/{package_name}/versions/{package_version_id}/restore"],
+    restorePackageVersionForOrg: ["POST /orgs/{org}/packages/{package_type}/{package_name}/versions/{package_version_id}/restore"]
   },
   projects: {
     addCollaborator: ["PUT /projects/{project_id}/collaborators/{username}", {
@@ -70636,7 +72682,7 @@ const Endpoints = {
         previews: ["squirrel-girl"]
       }
     }, {
-      deprecated: "octokit.reactions.deleteLegacy() is deprecated, see https://developer.github.com/v3/reactions/#delete-a-reaction-legacy"
+      deprecated: "octokit.reactions.deleteLegacy() is deprecated, see https://docs.github.com/rest/reference/reactions/#delete-a-reaction-legacy"
     }],
     listForCommitComment: ["GET /repos/{owner}/{repo}/comments/{comment_id}/reactions", {
       mediaType: {
@@ -70703,8 +72749,9 @@ const Endpoints = {
     createDeploymentStatus: ["POST /repos/{owner}/{repo}/deployments/{deployment_id}/statuses"],
     createDispatchEvent: ["POST /repos/{owner}/{repo}/dispatches"],
     createForAuthenticatedUser: ["POST /user/repos"],
-    createFork: ["POST /repos/{owner}/{repo}/forks"],
+    createFork: ["POST /repos/{owner}/{repo}/forks{?org,organization}"],
     createInOrg: ["POST /orgs/{org}/repos"],
+    createOrUpdateEnvironment: ["PUT /repos/{owner}/{repo}/environments/{environment_name}"],
     createOrUpdateFileContents: ["PUT /repos/{owner}/{repo}/contents/{path}"],
     createPagesSite: ["POST /repos/{owner}/{repo}/pages", {
       mediaType: {
@@ -70722,6 +72769,7 @@ const Endpoints = {
     delete: ["DELETE /repos/{owner}/{repo}"],
     deleteAccessRestrictions: ["DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions"],
     deleteAdminBranchProtection: ["DELETE /repos/{owner}/{repo}/branches/{branch}/protection/enforce_admins"],
+    deleteAnEnvironment: ["DELETE /repos/{owner}/{repo}/environments/{environment_name}"],
     deleteBranchProtection: ["DELETE /repos/{owner}/{repo}/branches/{branch}/protection"],
     deleteCommitComment: ["DELETE /repos/{owner}/{repo}/comments/{comment_id}"],
     deleteCommitSignatureProtection: ["DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_signatures", {
@@ -70752,7 +72800,11 @@ const Endpoints = {
         previews: ["dorian"]
       }
     }],
-    downloadArchive: ["GET /repos/{owner}/{repo}/{archive_format}/{ref}"],
+    downloadArchive: ["GET /repos/{owner}/{repo}/zipball/{ref}", {}, {
+      renamed: ["repos", "downloadZipballArchive"]
+    }],
+    downloadTarballArchive: ["GET /repos/{owner}/{repo}/tarball/{ref}"],
+    downloadZipballArchive: ["GET /repos/{owner}/{repo}/zipball/{ref}"],
     enableAutomatedSecurityFixes: ["PUT /repos/{owner}/{repo}/automated-security-fixes", {
       mediaType: {
         previews: ["london"]
@@ -70766,6 +72818,7 @@ const Endpoints = {
     get: ["GET /repos/{owner}/{repo}"],
     getAccessRestrictions: ["GET /repos/{owner}/{repo}/branches/{branch}/protection/restrictions"],
     getAdminBranchProtection: ["GET /repos/{owner}/{repo}/branches/{branch}/protection/enforce_admins"],
+    getAllEnvironments: ["GET /repos/{owner}/{repo}/environments"],
     getAllStatusCheckContexts: ["GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts"],
     getAllTopics: ["GET /repos/{owner}/{repo}/topics", {
       mediaType: {
@@ -70787,16 +72840,13 @@ const Endpoints = {
         previews: ["zzzax"]
       }
     }],
-    getCommunityProfileMetrics: ["GET /repos/{owner}/{repo}/community/profile", {
-      mediaType: {
-        previews: ["black-panther"]
-      }
-    }],
+    getCommunityProfileMetrics: ["GET /repos/{owner}/{repo}/community/profile"],
     getContent: ["GET /repos/{owner}/{repo}/contents/{path}"],
     getContributorsStats: ["GET /repos/{owner}/{repo}/stats/contributors"],
     getDeployKey: ["GET /repos/{owner}/{repo}/keys/{key_id}"],
     getDeployment: ["GET /repos/{owner}/{repo}/deployments/{deployment_id}"],
     getDeploymentStatus: ["GET /repos/{owner}/{repo}/deployments/{deployment_id}/statuses/{status_id}"],
+    getEnvironment: ["GET /repos/{owner}/{repo}/environments/{environment_name}"],
     getLatestPagesBuild: ["GET /repos/{owner}/{repo}/pages/builds/latest"],
     getLatestRelease: ["GET /repos/{owner}/{repo}/releases/latest"],
     getPages: ["GET /repos/{owner}/{repo}/pages"],
@@ -70805,6 +72855,7 @@ const Endpoints = {
     getPullRequestReviewProtection: ["GET /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews"],
     getPunchCardStats: ["GET /repos/{owner}/{repo}/stats/punch_card"],
     getReadme: ["GET /repos/{owner}/{repo}/readme"],
+    getReadmeInDirectory: ["GET /repos/{owner}/{repo}/readme/{dir}"],
     getRelease: ["GET /repos/{owner}/{repo}/releases/{release_id}"],
     getReleaseAsset: ["GET /repos/{owner}/{repo}/releases/assets/{asset_id}"],
     getReleaseByTag: ["GET /repos/{owner}/{repo}/releases/tags/{tag}"],
@@ -70815,6 +72866,7 @@ const Endpoints = {
     getUsersWithAccessToProtectedBranch: ["GET /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users"],
     getViews: ["GET /repos/{owner}/{repo}/traffic/views"],
     getWebhook: ["GET /repos/{owner}/{repo}/hooks/{hook_id}"],
+    getWebhookConfigForRepo: ["GET /repos/{owner}/{repo}/hooks/{hook_id}/config"],
     listBranches: ["GET /repos/{owner}/{repo}/branches"],
     listBranchesForHeadCommit: ["GET /repos/{owner}/{repo}/commits/{commit_sha}/branches-where-head", {
       mediaType: {
@@ -70865,6 +72917,7 @@ const Endpoints = {
     removeUserAccessRestrictions: ["DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users", {}, {
       mapToData: "users"
     }],
+    renameBranch: ["POST /repos/{owner}/{repo}/branches/{branch}/rename"],
     replaceAllTopics: ["PUT /repos/{owner}/{repo}/topics", {
       mediaType: {
         previews: ["mercy"]
@@ -70894,8 +72947,12 @@ const Endpoints = {
     updatePullRequestReviewProtection: ["PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews"],
     updateRelease: ["PATCH /repos/{owner}/{repo}/releases/{release_id}"],
     updateReleaseAsset: ["PATCH /repos/{owner}/{repo}/releases/assets/{asset_id}"],
-    updateStatusCheckPotection: ["PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks"],
+    updateStatusCheckPotection: ["PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", {}, {
+      renamed: ["repos", "updateStatusCheckProtection"]
+    }],
+    updateStatusCheckProtection: ["PATCH /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks"],
     updateWebhook: ["PATCH /repos/{owner}/{repo}/hooks/{hook_id}"],
+    updateWebhookConfigForRepo: ["PATCH /repos/{owner}/{repo}/hooks/{hook_id}/config"],
     uploadReleaseAsset: ["POST /repos/{owner}/{repo}/releases/{release_id}/assets{?name,label}", {
       baseUrl: "https://uploads.github.com"
     }]
@@ -70916,6 +72973,11 @@ const Endpoints = {
       }
     }],
     users: ["GET /search/users"]
+  },
+  secretScanning: {
+    getAlert: ["GET /repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}"],
+    listAlertsForRepo: ["GET /repos/{owner}/{repo}/secret-scanning/alerts"],
+    updateAlert: ["PATCH /repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}"]
   },
   teams: {
     addOrUpdateMembershipForUserInOrg: ["PUT /orgs/{org}/teams/{team_slug}/memberships/{username}"],
@@ -70997,7 +73059,7 @@ const Endpoints = {
   }
 };
 
-const VERSION = "4.1.1";
+const VERSION = "4.15.0";
 
 function endpointsToMethods(octokit, endpointsMap) {
   const newMethods = {};
@@ -71080,19 +73142,11 @@ function decorate(octokit, scope, methodName, defaults, decorations) {
   return Object.assign(withDecorations, requestWithDefaults);
 }
 
-/**
- * This plugin is a 1:1 copy of internal @octokit/rest plugins. The primary
- * goal is to rebuild @octokit/rest on top of @octokit/core. Once that is
- * done, we will remove the registerEndpoints methods and return the methods
- * directly as with the other plugins. At that point we will also remove the
- * legacy workarounds and deprecations.
- *
- * See the plan at
- * https://github.com/octokit/plugin-rest-endpoint-methods.js/pull/1
- */
-
 function restEndpointMethods(octokit) {
-  return endpointsToMethods(octokit, Endpoints);
+  const api = endpointsToMethods(octokit, Endpoints);
+  return _objectSpread2(_objectSpread2({}, api), {}, {
+    rest: api
+  });
 }
 restEndpointMethods.VERSION = VERSION;
 
@@ -71101,7 +73155,242 @@ exports.restEndpointMethods = restEndpointMethods;
 
 
 /***/ }),
-/* 843 */,
+/* 843 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const ansiStyles = __webpack_require__(663);
+const {stdout: stdoutColor, stderr: stderrColor} = __webpack_require__(247);
+const {
+	stringReplaceAll,
+	stringEncaseCRLFWithFirstIndex
+} = __webpack_require__(754);
+
+const {isArray} = Array;
+
+// `supportsColor.level` → `ansiStyles.color[name]` mapping
+const levelMapping = [
+	'ansi',
+	'ansi',
+	'ansi256',
+	'ansi16m'
+];
+
+const styles = Object.create(null);
+
+const applyOptions = (object, options = {}) => {
+	if (options.level && !(Number.isInteger(options.level) && options.level >= 0 && options.level <= 3)) {
+		throw new Error('The `level` option should be an integer from 0 to 3');
+	}
+
+	// Detect level if not set manually
+	const colorLevel = stdoutColor ? stdoutColor.level : 0;
+	object.level = options.level === undefined ? colorLevel : options.level;
+};
+
+class ChalkClass {
+	constructor(options) {
+		// eslint-disable-next-line no-constructor-return
+		return chalkFactory(options);
+	}
+}
+
+const chalkFactory = options => {
+	const chalk = {};
+	applyOptions(chalk, options);
+
+	chalk.template = (...arguments_) => chalkTag(chalk.template, ...arguments_);
+
+	Object.setPrototypeOf(chalk, Chalk.prototype);
+	Object.setPrototypeOf(chalk.template, chalk);
+
+	chalk.template.constructor = () => {
+		throw new Error('`chalk.constructor()` is deprecated. Use `new chalk.Instance()` instead.');
+	};
+
+	chalk.template.Instance = ChalkClass;
+
+	return chalk.template;
+};
+
+function Chalk(options) {
+	return chalkFactory(options);
+}
+
+for (const [styleName, style] of Object.entries(ansiStyles)) {
+	styles[styleName] = {
+		get() {
+			const builder = createBuilder(this, createStyler(style.open, style.close, this._styler), this._isEmpty);
+			Object.defineProperty(this, styleName, {value: builder});
+			return builder;
+		}
+	};
+}
+
+styles.visible = {
+	get() {
+		const builder = createBuilder(this, this._styler, true);
+		Object.defineProperty(this, 'visible', {value: builder});
+		return builder;
+	}
+};
+
+const usedModels = ['rgb', 'hex', 'keyword', 'hsl', 'hsv', 'hwb', 'ansi', 'ansi256'];
+
+for (const model of usedModels) {
+	styles[model] = {
+		get() {
+			const {level} = this;
+			return function (...arguments_) {
+				const styler = createStyler(ansiStyles.color[levelMapping[level]][model](...arguments_), ansiStyles.color.close, this._styler);
+				return createBuilder(this, styler, this._isEmpty);
+			};
+		}
+	};
+}
+
+for (const model of usedModels) {
+	const bgModel = 'bg' + model[0].toUpperCase() + model.slice(1);
+	styles[bgModel] = {
+		get() {
+			const {level} = this;
+			return function (...arguments_) {
+				const styler = createStyler(ansiStyles.bgColor[levelMapping[level]][model](...arguments_), ansiStyles.bgColor.close, this._styler);
+				return createBuilder(this, styler, this._isEmpty);
+			};
+		}
+	};
+}
+
+const proto = Object.defineProperties(() => {}, {
+	...styles,
+	level: {
+		enumerable: true,
+		get() {
+			return this._generator.level;
+		},
+		set(level) {
+			this._generator.level = level;
+		}
+	}
+});
+
+const createStyler = (open, close, parent) => {
+	let openAll;
+	let closeAll;
+	if (parent === undefined) {
+		openAll = open;
+		closeAll = close;
+	} else {
+		openAll = parent.openAll + open;
+		closeAll = close + parent.closeAll;
+	}
+
+	return {
+		open,
+		close,
+		openAll,
+		closeAll,
+		parent
+	};
+};
+
+const createBuilder = (self, _styler, _isEmpty) => {
+	const builder = (...arguments_) => {
+		if (isArray(arguments_[0]) && isArray(arguments_[0].raw)) {
+			// Called as a template literal, for example: chalk.red`2 + 3 = {bold ${2+3}}`
+			return applyStyle(builder, chalkTag(builder, ...arguments_));
+		}
+
+		// Single argument is hot path, implicit coercion is faster than anything
+		// eslint-disable-next-line no-implicit-coercion
+		return applyStyle(builder, (arguments_.length === 1) ? ('' + arguments_[0]) : arguments_.join(' '));
+	};
+
+	// We alter the prototype because we must return a function, but there is
+	// no way to create a function with a different prototype
+	Object.setPrototypeOf(builder, proto);
+
+	builder._generator = self;
+	builder._styler = _styler;
+	builder._isEmpty = _isEmpty;
+
+	return builder;
+};
+
+const applyStyle = (self, string) => {
+	if (self.level <= 0 || !string) {
+		return self._isEmpty ? '' : string;
+	}
+
+	let styler = self._styler;
+
+	if (styler === undefined) {
+		return string;
+	}
+
+	const {openAll, closeAll} = styler;
+	if (string.indexOf('\u001B') !== -1) {
+		while (styler !== undefined) {
+			// Replace any instances already present with a re-opening code
+			// otherwise only the part of the string until said closing code
+			// will be colored, and the rest will simply be 'plain'.
+			string = stringReplaceAll(string, styler.close, styler.open);
+
+			styler = styler.parent;
+		}
+	}
+
+	// We can move both next actions out of loop, because remaining actions in loop won't have
+	// any/visible effect on parts we add here. Close the styling before a linebreak and reopen
+	// after next line to fix a bleed issue on macOS: https://github.com/chalk/chalk/pull/92
+	const lfIndex = string.indexOf('\n');
+	if (lfIndex !== -1) {
+		string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
+	}
+
+	return openAll + string + closeAll;
+};
+
+let template;
+const chalkTag = (chalk, ...strings) => {
+	const [firstString] = strings;
+
+	if (!isArray(firstString) || !isArray(firstString.raw)) {
+		// If chalk() was called by itself or with a string,
+		// return the string itself as a string.
+		return strings.join(' ');
+	}
+
+	const arguments_ = strings.slice(1);
+	const parts = [firstString.raw[0]];
+
+	for (let i = 1; i < firstString.length; i++) {
+		parts.push(
+			String(arguments_[i - 1]).replace(/[{}\\]/g, '\\$&'),
+			String(firstString.raw[i])
+		);
+	}
+
+	if (template === undefined) {
+		template = __webpack_require__(606);
+	}
+
+	return template(chalk, parts.join(''));
+};
+
+Object.defineProperties(Chalk.prototype, styles);
+
+const chalk = Chalk(); // eslint-disable-line new-cap
+chalk.supportsColor = stdoutColor;
+chalk.stderr = Chalk({level: stderrColor ? stderrColor.level : 0}); // eslint-disable-line new-cap
+chalk.stderr.supportsColor = stderrColor;
+
+module.exports = chalk;
+
+
+/***/ }),
 /* 844 */,
 /* 845 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
@@ -71194,156 +73483,265 @@ module.exports = convert;
 
 "use strict";
 
-const escapeStringRegexp = __webpack_require__(138);
+const path = __webpack_require__(622);
+const childProcess = __webpack_require__(129);
+const crossSpawn = __webpack_require__(20);
+const stripFinalNewline = __webpack_require__(588);
+const npmRunPath = __webpack_require__(621);
+const onetime = __webpack_require__(723);
+const makeError = __webpack_require__(695);
+const normalizeStdio = __webpack_require__(999);
+const {spawnedKill, spawnedCancel, setupTimeout, setExitHandler} = __webpack_require__(809);
+const {handleInput, getSpawnedResult, makeAllStream, validateInputSync} = __webpack_require__(688);
+const {mergePromise, getSpawnedPromise} = __webpack_require__(856);
+const {joinCommand, parseCommand} = __webpack_require__(426);
 
-const {platform} = process;
+const DEFAULT_MAX_BUFFER = 1000 * 1000 * 100;
 
-const main = {
-	tick: '✔',
-	cross: '✖',
-	star: '★',
-	square: '▇',
-	squareSmall: '◻',
-	squareSmallFilled: '◼',
-	play: '▶',
-	circle: '◯',
-	circleFilled: '◉',
-	circleDotted: '◌',
-	circleDouble: '◎',
-	circleCircle: 'ⓞ',
-	circleCross: 'ⓧ',
-	circlePipe: 'Ⓘ',
-	circleQuestionMark: '?⃝',
-	bullet: '●',
-	dot: '․',
-	line: '─',
-	ellipsis: '…',
-	pointer: '❯',
-	pointerSmall: '›',
-	info: 'ℹ',
-	warning: '⚠',
-	hamburger: '☰',
-	smiley: '㋡',
-	mustache: '෴',
-	heart: '♥',
-	nodejs: '⬢',
-	arrowUp: '↑',
-	arrowDown: '↓',
-	arrowLeft: '←',
-	arrowRight: '→',
-	radioOn: '◉',
-	radioOff: '◯',
-	checkboxOn: '☒',
-	checkboxOff: '☐',
-	checkboxCircleOn: 'ⓧ',
-	checkboxCircleOff: 'Ⓘ',
-	questionMarkPrefix: '?⃝',
-	oneHalf: '½',
-	oneThird: '⅓',
-	oneQuarter: '¼',
-	oneFifth: '⅕',
-	oneSixth: '⅙',
-	oneSeventh: '⅐',
-	oneEighth: '⅛',
-	oneNinth: '⅑',
-	oneTenth: '⅒',
-	twoThirds: '⅔',
-	twoFifths: '⅖',
-	threeQuarters: '¾',
-	threeFifths: '⅗',
-	threeEighths: '⅜',
-	fourFifths: '⅘',
-	fiveSixths: '⅚',
-	fiveEighths: '⅝',
-	sevenEighths: '⅞'
-};
+const getEnv = ({env: envOption, extendEnv, preferLocal, localDir, execPath}) => {
+	const env = extendEnv ? {...process.env, ...envOption} : envOption;
 
-const windows = {
-	tick: '√',
-	cross: '×',
-	star: '*',
-	square: '█',
-	squareSmall: '[ ]',
-	squareSmallFilled: '[█]',
-	play: '►',
-	circle: '( )',
-	circleFilled: '(*)',
-	circleDotted: '( )',
-	circleDouble: '( )',
-	circleCircle: '(○)',
-	circleCross: '(×)',
-	circlePipe: '(│)',
-	circleQuestionMark: '(?)',
-	bullet: '*',
-	dot: '.',
-	line: '─',
-	ellipsis: '...',
-	pointer: '>',
-	pointerSmall: '»',
-	info: 'i',
-	warning: '‼',
-	hamburger: '≡',
-	smiley: '☺',
-	mustache: '┌─┐',
-	heart: main.heart,
-	nodejs: '♦',
-	arrowUp: main.arrowUp,
-	arrowDown: main.arrowDown,
-	arrowLeft: main.arrowLeft,
-	arrowRight: main.arrowRight,
-	radioOn: '(*)',
-	radioOff: '( )',
-	checkboxOn: '[×]',
-	checkboxOff: '[ ]',
-	checkboxCircleOn: '(×)',
-	checkboxCircleOff: '( )',
-	questionMarkPrefix: '？',
-	oneHalf: '1/2',
-	oneThird: '1/3',
-	oneQuarter: '1/4',
-	oneFifth: '1/5',
-	oneSixth: '1/6',
-	oneSeventh: '1/7',
-	oneEighth: '1/8',
-	oneNinth: '1/9',
-	oneTenth: '1/10',
-	twoThirds: '2/3',
-	twoFifths: '2/5',
-	threeQuarters: '3/4',
-	threeFifths: '3/5',
-	threeEighths: '3/8',
-	fourFifths: '4/5',
-	fiveSixths: '5/6',
-	fiveEighths: '5/8',
-	sevenEighths: '7/8'
-};
-
-if (platform === 'linux') {
-	// The main one doesn't look that good on Ubuntu.
-	main.questionMarkPrefix = '?';
-}
-
-const figures = platform === 'win32' ? windows : main;
-
-const fn = string => {
-	if (figures === main) {
-		return string;
+	if (preferLocal) {
+		return npmRunPath.env({env, cwd: localDir, execPath});
 	}
 
-	for (const [key, value] of Object.entries(main)) {
-		if (value === figures[key]) {
-			continue;
+	return env;
+};
+
+const handleArguments = (file, args, options = {}) => {
+	const parsed = crossSpawn._parse(file, args, options);
+	file = parsed.command;
+	args = parsed.args;
+	options = parsed.options;
+
+	options = {
+		maxBuffer: DEFAULT_MAX_BUFFER,
+		buffer: true,
+		stripFinalNewline: true,
+		extendEnv: true,
+		preferLocal: false,
+		localDir: options.cwd || process.cwd(),
+		execPath: process.execPath,
+		encoding: 'utf8',
+		reject: true,
+		cleanup: true,
+		all: false,
+		windowsHide: true,
+		...options
+	};
+
+	options.env = getEnv(options);
+
+	options.stdio = normalizeStdio(options);
+
+	if (process.platform === 'win32' && path.basename(file, '.exe') === 'cmd') {
+		// #116
+		args.unshift('/q');
+	}
+
+	return {file, args, options, parsed};
+};
+
+const handleOutput = (options, value, error) => {
+	if (typeof value !== 'string' && !Buffer.isBuffer(value)) {
+		// When `execa.sync()` errors, we normalize it to '' to mimic `execa()`
+		return error === undefined ? undefined : '';
+	}
+
+	if (options.stripFinalNewline) {
+		return stripFinalNewline(value);
+	}
+
+	return value;
+};
+
+const execa = (file, args, options) => {
+	const parsed = handleArguments(file, args, options);
+	const command = joinCommand(file, args);
+
+	let spawned;
+	try {
+		spawned = childProcess.spawn(parsed.file, parsed.args, parsed.options);
+	} catch (error) {
+		// Ensure the returned error is always both a promise and a child process
+		const dummySpawned = new childProcess.ChildProcess();
+		const errorPromise = Promise.reject(makeError({
+			error,
+			stdout: '',
+			stderr: '',
+			all: '',
+			command,
+			parsed,
+			timedOut: false,
+			isCanceled: false,
+			killed: false
+		}));
+		return mergePromise(dummySpawned, errorPromise);
+	}
+
+	const spawnedPromise = getSpawnedPromise(spawned);
+	const timedPromise = setupTimeout(spawned, parsed.options, spawnedPromise);
+	const processDone = setExitHandler(spawned, parsed.options, timedPromise);
+
+	const context = {isCanceled: false};
+
+	spawned.kill = spawnedKill.bind(null, spawned.kill.bind(spawned));
+	spawned.cancel = spawnedCancel.bind(null, spawned, context);
+
+	const handlePromise = async () => {
+		const [{error, exitCode, signal, timedOut}, stdoutResult, stderrResult, allResult] = await getSpawnedResult(spawned, parsed.options, processDone);
+		const stdout = handleOutput(parsed.options, stdoutResult);
+		const stderr = handleOutput(parsed.options, stderrResult);
+		const all = handleOutput(parsed.options, allResult);
+
+		if (error || exitCode !== 0 || signal !== null) {
+			const returnedError = makeError({
+				error,
+				exitCode,
+				signal,
+				stdout,
+				stderr,
+				all,
+				command,
+				parsed,
+				timedOut,
+				isCanceled: context.isCanceled,
+				killed: spawned.killed
+			});
+
+			if (!parsed.options.reject) {
+				return returnedError;
+			}
+
+			throw returnedError;
 		}
 
-		string = string.replace(new RegExp(escapeStringRegexp(value), 'g'), figures[key]);
-	}
+		return {
+			command,
+			exitCode: 0,
+			stdout,
+			stderr,
+			all,
+			failed: false,
+			timedOut: false,
+			isCanceled: false,
+			killed: false
+		};
+	};
 
-	return string;
+	const handlePromiseOnce = onetime(handlePromise);
+
+	crossSpawn._enoent.hookChildProcess(spawned, parsed.parsed);
+
+	handleInput(spawned, parsed.options.input);
+
+	spawned.all = makeAllStream(spawned, parsed.options);
+
+	return mergePromise(spawned, handlePromiseOnce);
 };
 
-module.exports = Object.assign(fn, figures);
-module.exports.main = main;
-module.exports.windows = windows;
+module.exports = execa;
+
+module.exports.sync = (file, args, options) => {
+	const parsed = handleArguments(file, args, options);
+	const command = joinCommand(file, args);
+
+	validateInputSync(parsed.options);
+
+	let result;
+	try {
+		result = childProcess.spawnSync(parsed.file, parsed.args, parsed.options);
+	} catch (error) {
+		throw makeError({
+			error,
+			stdout: '',
+			stderr: '',
+			all: '',
+			command,
+			parsed,
+			timedOut: false,
+			isCanceled: false,
+			killed: false
+		});
+	}
+
+	const stdout = handleOutput(parsed.options, result.stdout, result.error);
+	const stderr = handleOutput(parsed.options, result.stderr, result.error);
+
+	if (result.error || result.status !== 0 || result.signal !== null) {
+		const error = makeError({
+			stdout,
+			stderr,
+			error: result.error,
+			signal: result.signal,
+			exitCode: result.status,
+			command,
+			parsed,
+			timedOut: result.error && result.error.code === 'ETIMEDOUT',
+			isCanceled: false,
+			killed: result.signal !== null
+		});
+
+		if (!parsed.options.reject) {
+			return error;
+		}
+
+		throw error;
+	}
+
+	return {
+		command,
+		exitCode: 0,
+		stdout,
+		stderr,
+		failed: false,
+		timedOut: false,
+		isCanceled: false,
+		killed: false
+	};
+};
+
+module.exports.command = (command, options) => {
+	const [file, ...args] = parseCommand(command);
+	return execa(file, args, options);
+};
+
+module.exports.commandSync = (command, options) => {
+	const [file, ...args] = parseCommand(command);
+	return execa.sync(file, args, options);
+};
+
+module.exports.node = (scriptPath, args, options = {}) => {
+	if (args && !Array.isArray(args) && typeof args === 'object') {
+		options = args;
+		args = [];
+	}
+
+	const stdio = normalizeStdio.node(options);
+	const defaultExecArgv = process.execArgv.filter(arg => !arg.startsWith('--inspect'));
+
+	const {
+		nodePath = process.execPath,
+		nodeOptions = defaultExecArgv
+	} = options;
+
+	return execa(
+		nodePath,
+		[
+			...nodeOptions,
+			scriptPath,
+			...(Array.isArray(args) ? args : [])
+		],
+		{
+			...options,
+			stdin: undefined,
+			stdout: undefined,
+			stderr: undefined,
+			stdio,
+			shell: false
+		}
+	);
+};
 
 
 /***/ }),
@@ -71756,7 +74154,7 @@ function upgradeGPLs (value) {
 
 
 // A linked list to keep track of recently-used-ness
-const Yallist = __webpack_require__(368)
+const Yallist = __webpack_require__(612)
 
 const MAX = Symbol('max')
 const LENGTH = Symbol('length')
@@ -72090,11 +74488,86 @@ module.exports = LRUCache
 
 
 /***/ }),
-/* 856 */,
+/* 856 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const nativePromisePrototype = (async () => {})().constructor.prototype;
+const descriptors = ['then', 'catch', 'finally'].map(property => [
+	property,
+	Reflect.getOwnPropertyDescriptor(nativePromisePrototype, property)
+]);
+
+// The return value is a mixin of `childProcess` and `Promise`
+const mergePromise = (spawned, promise) => {
+	for (const [property, descriptor] of descriptors) {
+		// Starting the main `promise` is deferred to avoid consuming streams
+		const value = typeof promise === 'function' ?
+			(...args) => Reflect.apply(descriptor.value, promise(), args) :
+			descriptor.value.bind(promise);
+
+		Reflect.defineProperty(spawned, property, {...descriptor, value});
+	}
+
+	return spawned;
+};
+
+// Use promises instead of `child_process` events
+const getSpawnedPromise = spawned => {
+	return new Promise((resolve, reject) => {
+		spawned.on('exit', (exitCode, signal) => {
+			resolve({exitCode, signal});
+		});
+
+		spawned.on('error', error => {
+			reject(error);
+		});
+
+		if (spawned.stdin) {
+			spawned.stdin.on('error', error => {
+				reject(error);
+			});
+		}
+	});
+};
+
+module.exports = {
+	mergePromise,
+	getSpawnedPromise
+};
+
+
+
+/***/ }),
 /* 857 */,
 /* 858 */,
 /* 859 */,
-/* 860 */,
+/* 860 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const fs = __webpack_require__(747);
+
+module.exports = fp => new Promise(resolve => {
+	fs.access(fp, err => {
+		resolve(!err);
+	});
+});
+
+module.exports.sync = fp => {
+	try {
+		fs.accessSync(fp);
+		return true;
+	} catch (err) {
+		return false;
+	}
+};
+
+
+/***/ }),
 /* 861 */
 /***/ (function(module) {
 
@@ -72138,13 +74611,13 @@ module.exports = {
 
 "use strict";
 
-var url = __webpack_require__(835)
-var gitHosts = __webpack_require__(139)
-var GitHost = module.exports = __webpack_require__(370)
-var LRU = __webpack_require__(855)
-var cache = new LRU({max: 1000})
+const url = __webpack_require__(835)
+const gitHosts = __webpack_require__(139)
+const GitHost = module.exports = __webpack_require__(370)
+const LRU = __webpack_require__(855)
+const cache = new LRU({ max: 1000 })
 
-var protocolToRepresentationMap = {
+const protocolToRepresentationMap = {
   'git+ssh:': 'sshurl',
   'git+https:': 'https',
   'ssh:': 'sshurl',
@@ -72155,7 +74628,7 @@ function protocolToRepresentation (protocol) {
   return protocolToRepresentationMap[protocol] || protocol.slice(0, -1)
 }
 
-var authProtocols = {
+const authProtocols = {
   'git:': true,
   'https:': true,
   'git+https:': true,
@@ -72163,9 +74636,14 @@ var authProtocols = {
   'git+http:': true
 }
 
+const knownProtocols = Object.keys(gitHosts.byShortcut).concat(['http:', 'https:', 'git:', 'git+ssh:', 'git+https:', 'ssh:'])
+
 module.exports.fromUrl = function (giturl, opts) {
-  if (typeof giturl !== 'string') return
-  var key = giturl + JSON.stringify(opts || {})
+  if (typeof giturl !== 'string') {
+    return
+  }
+
+  const key = giturl + JSON.stringify(opts || {})
 
   if (!cache.has(key)) {
     cache.set(key, fromUrl(giturl, opts))
@@ -72175,113 +74653,199 @@ module.exports.fromUrl = function (giturl, opts) {
 }
 
 function fromUrl (giturl, opts) {
-  if (giturl == null || giturl === '') return
-  var url = fixupUnqualifiedGist(
-    isGitHubShorthand(giturl) ? 'github:' + giturl : giturl
-  )
-  var parsed = parseGitUrl(url)
-  var shortcutMatch = url.match(new RegExp('^([^:]+):(?:(?:[^@:]+(?:[^@]+)?@)?([^/]*))[/](.+?)(?:[.]git)?($|#)'))
-  var matches = Object.keys(gitHosts).map(function (gitHostName) {
-    try {
-      var gitHostInfo = gitHosts[gitHostName]
-      var auth = null
-      if (parsed.auth && authProtocols[parsed.protocol]) {
-        auth = parsed.auth
+  if (!giturl) {
+    return
+  }
+
+  const url = isGitHubShorthand(giturl) ? 'github:' + giturl : correctProtocol(giturl)
+  const parsed = parseGitUrl(url)
+  if (!parsed) {
+    return parsed
+  }
+
+  const gitHostShortcut = gitHosts.byShortcut[parsed.protocol]
+  const gitHostDomain = gitHosts.byDomain[parsed.hostname.startsWith('www.') ? parsed.hostname.slice(4) : parsed.hostname]
+  const gitHostName = gitHostShortcut || gitHostDomain
+  if (!gitHostName) {
+    return
+  }
+
+  const gitHostInfo = gitHosts[gitHostShortcut || gitHostDomain]
+  let auth = null
+  if (authProtocols[parsed.protocol] && (parsed.username || parsed.password)) {
+    auth = `${parsed.username}${parsed.password ? ':' + parsed.password : ''}`
+  }
+
+  let committish = null
+  let user = null
+  let project = null
+  let defaultRepresentation = null
+
+  try {
+    if (gitHostShortcut) {
+      let pathname = parsed.pathname.startsWith('/') ? parsed.pathname.slice(1) : parsed.pathname
+      const firstAt = pathname.indexOf('@')
+      // we ignore auth for shortcuts, so just trim it out
+      if (firstAt > -1) {
+        pathname = pathname.slice(firstAt + 1)
       }
-      var committish = parsed.hash ? decodeURIComponent(parsed.hash.substr(1)) : null
-      var user = null
-      var project = null
-      var defaultRepresentation = null
-      if (shortcutMatch && shortcutMatch[1] === gitHostName) {
-        user = shortcutMatch[2] && decodeURIComponent(shortcutMatch[2])
-        project = decodeURIComponent(shortcutMatch[3])
-        defaultRepresentation = 'shortcut'
-      } else {
-        if (parsed.host && parsed.host !== gitHostInfo.domain && parsed.host.replace(/^www[.]/, '') !== gitHostInfo.domain) return
-        if (!gitHostInfo.protocols_re.test(parsed.protocol)) return
-        if (!parsed.path) return
-        var pathmatch = gitHostInfo.pathmatch
-        var matched = parsed.path.match(pathmatch)
-        if (!matched) return
-        /* istanbul ignore else */
-        if (matched[1] !== null && matched[1] !== undefined) {
-          user = decodeURIComponent(matched[1].replace(/^:/, ''))
+
+      const lastSlash = pathname.lastIndexOf('/')
+      if (lastSlash > -1) {
+        user = decodeURIComponent(pathname.slice(0, lastSlash))
+        // we want nulls only, never empty strings
+        if (!user) {
+          user = null
         }
-        project = decodeURIComponent(matched[2])
-        defaultRepresentation = protocolToRepresentation(parsed.protocol)
+        project = decodeURIComponent(pathname.slice(lastSlash + 1))
+      } else {
+        project = decodeURIComponent(pathname)
       }
-      return new GitHost(gitHostName, user, auth, project, committish, defaultRepresentation, opts)
-    } catch (ex) {
-      /* istanbul ignore else */
-      if (ex instanceof URIError) {
-      } else throw ex
-    }
-  }).filter(function (gitHostInfo) { return gitHostInfo })
-  if (matches.length !== 1) return
-  return matches[0]
-}
 
-function isGitHubShorthand (arg) {
-  // Note: This does not fully test the git ref format.
-  // See https://www.kernel.org/pub/software/scm/git/docs/git-check-ref-format.html
-  //
-  // The only way to do this properly would be to shell out to
-  // git-check-ref-format, and as this is a fast sync function,
-  // we don't want to do that.  Just let git fail if it turns
-  // out that the commit-ish is invalid.
-  // GH usernames cannot start with . or -
-  return /^[^:@%/\s.-][^:@%/\s]*[/][^:@\s/%]+(?:#.*)?$/.test(arg)
-}
-
-function fixupUnqualifiedGist (giturl) {
-  // necessary for round-tripping gists
-  var parsed = url.parse(giturl)
-  if (parsed.protocol === 'gist:' && parsed.host && !parsed.path) {
-    return parsed.protocol + '/' + parsed.host
-  } else {
-    return giturl
-  }
-}
-
-function parseGitUrl (giturl) {
-  var matched = giturl.match(/^([^@]+)@([^:/]+):[/]?((?:[^/]+[/])?[^/]+?)(?:[.]git)?(#.*)?$/)
-  if (!matched) {
-    var legacy = url.parse(giturl)
-    if (legacy.auth) {
-      // git urls can be in the form of scp-style/ssh-connect strings, like
-      // git+ssh://user@host.com:some/path, which the legacy url parser
-      // supports, but WhatWG url.URL class does not.  However, the legacy
-      // parser de-urlencodes the username and password, so something like
-      // https://user%3An%40me:p%40ss%3Aword@x.com/ becomes
-      // https://user:n@me:p@ss:word@x.com/ which is all kinds of wrong.
-      // Pull off just the auth and host, so we dont' get the confusing
-      // scp-style URL, then pass that to the WhatWG parser to get the
-      // auth properly escaped.
-      const authmatch = giturl.match(/[^@]+@[^:/]+/)
-      /* istanbul ignore else - this should be impossible */
-      if (authmatch) {
-        var whatwg = new url.URL(authmatch[0])
-        legacy.auth = whatwg.username || ''
-        if (whatwg.password) legacy.auth += ':' + whatwg.password
+      if (project.endsWith('.git')) {
+        project = project.slice(0, -4)
       }
+
+      if (parsed.hash) {
+        committish = decodeURIComponent(parsed.hash.slice(1))
+      }
+
+      defaultRepresentation = 'shortcut'
+    } else {
+      if (!gitHostInfo.protocols.includes(parsed.protocol)) {
+        return
+      }
+
+      const segments = gitHostInfo.extract(parsed)
+      if (!segments) {
+        return
+      }
+
+      user = segments.user && decodeURIComponent(segments.user)
+      project = decodeURIComponent(segments.project)
+      committish = decodeURIComponent(segments.committish)
+      defaultRepresentation = protocolToRepresentation(parsed.protocol)
     }
-    return legacy
+  } catch (err) {
+    /* istanbul ignore else */
+    if (err instanceof URIError) {
+      return
+    } else {
+      throw err
+    }
   }
-  return {
-    protocol: 'git+ssh:',
-    slashes: true,
-    auth: matched[1],
-    host: matched[2],
-    port: null,
-    hostname: matched[2],
-    hash: matched[4],
-    search: null,
-    query: null,
-    pathname: '/' + matched[3],
-    path: '/' + matched[3],
-    href: 'git+ssh://' + matched[1] + '@' + matched[2] +
-          '/' + matched[3] + (matched[4] || '')
+
+  return new GitHost(gitHostName, user, auth, project, committish, defaultRepresentation, opts)
+}
+
+// accepts input like git:github.com:user/repo and inserts the // after the first :
+const correctProtocol = (arg) => {
+  const firstColon = arg.indexOf(':')
+  const proto = arg.slice(0, firstColon + 1)
+  if (knownProtocols.includes(proto)) {
+    return arg
   }
+
+  const firstAt = arg.indexOf('@')
+  if (firstAt > -1) {
+    if (firstAt > firstColon) {
+      return `git+ssh://${arg}`
+    } else {
+      return arg
+    }
+  }
+
+  const doubleSlash = arg.indexOf('//')
+  if (doubleSlash === firstColon + 1) {
+    return arg
+  }
+
+  return arg.slice(0, firstColon + 1) + '//' + arg.slice(firstColon + 1)
+}
+
+// look for github shorthand inputs, such as npm/cli
+const isGitHubShorthand = (arg) => {
+  // it cannot contain whitespace before the first #
+  // it cannot start with a / because that's probably an absolute file path
+  // but it must include a slash since repos are username/repository
+  // it cannot start with a . because that's probably a relative file path
+  // it cannot start with an @ because that's a scoped package if it passes the other tests
+  // it cannot contain a : before a # because that tells us that there's a protocol
+  // a second / may not exist before a #
+  const firstHash = arg.indexOf('#')
+  const firstSlash = arg.indexOf('/')
+  const secondSlash = arg.indexOf('/', firstSlash + 1)
+  const firstColon = arg.indexOf(':')
+  const firstSpace = /\s/.exec(arg)
+  const firstAt = arg.indexOf('@')
+
+  const spaceOnlyAfterHash = !firstSpace || (firstHash > -1 && firstSpace.index > firstHash)
+  const atOnlyAfterHash = firstAt === -1 || (firstHash > -1 && firstAt > firstHash)
+  const colonOnlyAfterHash = firstColon === -1 || (firstHash > -1 && firstColon > firstHash)
+  const secondSlashOnlyAfterHash = secondSlash === -1 || (firstHash > -1 && secondSlash > firstHash)
+  const hasSlash = firstSlash > 0
+  // if a # is found, what we really want to know is that the character immediately before # is not a /
+  const doesNotEndWithSlash = firstHash > -1 ? arg[firstHash - 1] !== '/' : !arg.endsWith('/')
+  const doesNotStartWithDot = !arg.startsWith('.')
+
+  return spaceOnlyAfterHash && hasSlash && doesNotEndWithSlash && doesNotStartWithDot && atOnlyAfterHash && colonOnlyAfterHash && secondSlashOnlyAfterHash
+}
+
+// attempt to correct an scp style url so that it will parse with `new URL()`
+const correctUrl = (giturl) => {
+  const firstAt = giturl.indexOf('@')
+  const lastHash = giturl.lastIndexOf('#')
+  let firstColon = giturl.indexOf(':')
+  let lastColon = giturl.lastIndexOf(':', lastHash > -1 ? lastHash : Infinity)
+
+  let corrected
+  if (lastColon > firstAt) {
+    // the last : comes after the first @ (or there is no @)
+    // like it would in:
+    // proto://hostname.com:user/repo
+    // username@hostname.com:user/repo
+    // :password@hostname.com:user/repo
+    // username:password@hostname.com:user/repo
+    // proto://username@hostname.com:user/repo
+    // proto://:password@hostname.com:user/repo
+    // proto://username:password@hostname.com:user/repo
+    // then we replace the last : with a / to create a valid path
+    corrected = giturl.slice(0, lastColon) + '/' + giturl.slice(lastColon + 1)
+    // // and we find our new : positions
+    firstColon = corrected.indexOf(':')
+    lastColon = corrected.lastIndexOf(':')
+  }
+
+  if (firstColon === -1 && giturl.indexOf('//') === -1) {
+    // we have no : at all
+    // as it would be in:
+    // username@hostname.com/user/repo
+    // then we prepend a protocol
+    corrected = `git+ssh://${corrected}`
+  }
+
+  return corrected
+}
+
+// try to parse the url as its given to us, if that throws
+// then we try to clean the url and parse that result instead
+// THIS FUNCTION SHOULD NEVER THROW
+const parseGitUrl = (giturl) => {
+  let result
+  try {
+    result = new url.URL(giturl)
+  } catch (err) {}
+
+  if (result) {
+    return result
+  }
+
+  const correctedUrl = correctUrl(giturl)
+  try {
+    result = new url.URL(correctedUrl)
+  } catch (err) {}
+
+  return result
 }
 
 
@@ -72289,22 +74853,24 @@ function parseGitUrl (giturl) {
 /* 866 */
 /***/ (function(module) {
 
-module.exports = removeHook
+module.exports = removeHook;
 
-function removeHook (state, name, method) {
+function removeHook(state, name, method) {
   if (!state.registry[name]) {
-    return
+    return;
   }
 
   var index = state.registry[name]
-    .map(function (registered) { return registered.orig })
-    .indexOf(method)
+    .map(function (registered) {
+      return registered.orig;
+    })
+    .indexOf(method);
 
   if (index === -1) {
-    return
+    return;
   }
 
-  state.registry[name].splice(index, 1)
+  state.registry[name].splice(index, 1);
 }
 
 
@@ -72473,7 +75039,7 @@ module.exports = {
   ltr: __webpack_require__(790),
   intersects: __webpack_require__(872),
   simplifyRange: __webpack_require__(877),
-  subset: __webpack_require__(999),
+  subset: __webpack_require__(404),
 }
 
 
@@ -72533,7 +75099,7 @@ module.exports = (versions, range, options) => {
 
 "use strict";
 
-const errorEx = __webpack_require__(612);
+const errorEx = __webpack_require__(518);
 const fallback = __webpack_require__(80);
 
 const JSONError = errorEx('JSONError', {
@@ -72690,7 +75256,82 @@ PassThrough.prototype._transform = function (chunk, encoding, cb) {
 
 /***/ }),
 /* 883 */,
-/* 884 */,
+/* 884 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+
+var has = __webpack_require__(166);
+
+function specifierIncluded(current, specifier) {
+	var nodeParts = current.split('.');
+	var parts = specifier.split(' ');
+	var op = parts.length > 1 ? parts[0] : '=';
+	var versionParts = (parts.length > 1 ? parts[1] : parts[0]).split('.');
+
+	for (var i = 0; i < 3; ++i) {
+		var cur = parseInt(nodeParts[i] || 0, 10);
+		var ver = parseInt(versionParts[i] || 0, 10);
+		if (cur === ver) {
+			continue; // eslint-disable-line no-restricted-syntax, no-continue
+		}
+		if (op === '<') {
+			return cur < ver;
+		}
+		if (op === '>=') {
+			return cur >= ver;
+		}
+		return false;
+	}
+	return op === '>=';
+}
+
+function matchesRange(current, range) {
+	var specifiers = range.split(/ ?&& ?/);
+	if (specifiers.length === 0) {
+		return false;
+	}
+	for (var i = 0; i < specifiers.length; ++i) {
+		if (!specifierIncluded(current, specifiers[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function versionIncluded(nodeVersion, specifierValue) {
+	if (typeof specifierValue === 'boolean') {
+		return specifierValue;
+	}
+
+	var current = typeof nodeVersion === 'undefined'
+		? process.versions && process.versions.node && process.versions.node
+		: nodeVersion;
+
+	if (typeof current !== 'string') {
+		throw new TypeError(typeof nodeVersion === 'undefined' ? 'Unable to determine current node version' : 'If provided, a valid node version is required');
+	}
+
+	if (specifierValue && typeof specifierValue === 'object') {
+		for (var i = 0; i < specifierValue.length; ++i) {
+			if (matchesRange(current, specifierValue[i])) {
+				return true;
+			}
+		}
+		return false;
+	}
+	return matchesRange(current, specifierValue);
+}
+
+var data = __webpack_require__(911);
+
+module.exports = function isCore(x, nodeVersion) {
+	return has(data, x) && versionIncluded(nodeVersion, data[x]);
+};
+
+
+/***/ }),
 /* 885 */
 /***/ (function(module) {
 
@@ -73068,6 +75709,39 @@ marked.walkTokens = function(tokens, callback) {
 };
 
 /**
+ * Parse Inline
+ */
+marked.parseInline = function(src, opt) {
+  // throw error in case of non string input
+  if (typeof src === 'undefined' || src === null) {
+    throw new Error('marked.parseInline(): input parameter is undefined or null');
+  }
+  if (typeof src !== 'string') {
+    throw new Error('marked.parseInline(): input parameter is of type '
+      + Object.prototype.toString.call(src) + ', string expected');
+  }
+
+  opt = merge({}, marked.defaults, opt || {});
+  checkSanitizeDeprecation(opt);
+
+  try {
+    const tokens = Lexer.lexInline(src, opt);
+    if (opt.walkTokens) {
+      marked.walkTokens(tokens, opt.walkTokens);
+    }
+    return Parser.parseInline(tokens, opt);
+  } catch (e) {
+    e.message += '\nPlease report this to https://github.com/markedjs/marked.';
+    if (opt.silent) {
+      return '<p>An error occurred:</p><pre>'
+        + escape(e.message + '', true)
+        + '</pre>';
+    }
+    throw e;
+  }
+};
+
+/**
  * Expose
  */
 
@@ -73410,7 +76084,61 @@ function bootstrap(esprima, exportFn) {
 
 
 /***/ }),
-/* 889 */,
+/* 889 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const path = __webpack_require__(622);
+const locatePath = __webpack_require__(572);
+
+module.exports = (filename, opts) => {
+	opts = opts || {};
+
+	const startDir = path.resolve(opts.cwd || '');
+	const root = path.parse(startDir).root;
+
+	const filenames = [].concat(filename);
+
+	return new Promise(resolve => {
+		(function find(dir) {
+			locatePath(filenames, {cwd: dir}).then(file => {
+				if (file) {
+					resolve(path.join(dir, file));
+				} else if (dir === root) {
+					resolve(null);
+				} else {
+					find(path.dirname(dir));
+				}
+			});
+		})(startDir);
+	});
+};
+
+module.exports.sync = (filename, opts) => {
+	opts = opts || {};
+
+	let dir = path.resolve(opts.cwd || '');
+	const root = path.parse(dir).root;
+
+	const filenames = [].concat(filename);
+
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		const file = locatePath.sync(filenames, {cwd: dir});
+
+		if (file) {
+			return path.join(dir, file);
+		} else if (dir === root) {
+			return null;
+		}
+
+		dir = path.dirname(dir);
+	}
+};
+
+
+/***/ }),
 /* 890 */,
 /* 891 */,
 /* 892 */,
@@ -73425,8 +76153,8 @@ function specifierIncluded(specifier) {
     var versionParts = (parts.length > 1 ? parts[1] : parts[0]).split('.');
 
     for (var i = 0; i < 3; ++i) {
-        var cur = Number(current[i] || 0);
-        var ver = Number(versionParts[i] || 0);
+        var cur = parseInt(current[i] || 0, 10);
+        var ver = parseInt(versionParts[i] || 0, 10);
         if (cur === ver) {
             continue; // eslint-disable-line no-restricted-syntax, no-continue
         }
@@ -73498,13 +76226,16 @@ Object.defineProperty(exports, '__esModule', { value: true });
 var request = __webpack_require__(753);
 var universalUserAgent = __webpack_require__(796);
 
-const VERSION = "4.5.2";
+const VERSION = "4.6.1";
 
 class GraphqlError extends Error {
   constructor(request, response) {
     const message = response.data.errors[0].message;
     super(message);
     Object.assign(this, response.data);
+    Object.assign(this, {
+      headers: response.headers
+    });
     this.name = "GraphqlError";
     this.request = request; // Maintains proper stack trace (only available on V8)
 
@@ -73518,13 +76249,26 @@ class GraphqlError extends Error {
 }
 
 const NON_VARIABLE_OPTIONS = ["method", "baseUrl", "url", "headers", "request", "query", "mediaType"];
+const FORBIDDEN_VARIABLE_OPTIONS = ["query", "method", "url"];
+const GHES_V3_SUFFIX_REGEX = /\/api\/v3\/?$/;
 function graphql(request, query, options) {
-  options = typeof query === "string" ? options = Object.assign({
+  if (options) {
+    if (typeof query === "string" && "query" in options) {
+      return Promise.reject(new Error(`[@octokit/graphql] "query" cannot be used as variable name`));
+    }
+
+    for (const key in options) {
+      if (!FORBIDDEN_VARIABLE_OPTIONS.includes(key)) continue;
+      return Promise.reject(new Error(`[@octokit/graphql] "${key}" cannot be used as variable name`));
+    }
+  }
+
+  const parsedOptions = typeof query === "string" ? Object.assign({
     query
-  }, options) : options = query;
-  const requestOptions = Object.keys(options).reduce((result, key) => {
+  }, options) : query;
+  const requestOptions = Object.keys(parsedOptions).reduce((result, key) => {
     if (NON_VARIABLE_OPTIONS.includes(key)) {
-      result[key] = options[key];
+      result[key] = parsedOptions[key];
       return result;
     }
 
@@ -73532,12 +76276,27 @@ function graphql(request, query, options) {
       result.variables = {};
     }
 
-    result.variables[key] = options[key];
+    result.variables[key] = parsedOptions[key];
     return result;
-  }, {});
+  }, {}); // workaround for GitHub Enterprise baseUrl set with /api/v3 suffix
+  // https://github.com/octokit/auth-app.js/issues/111#issuecomment-657610451
+
+  const baseUrl = parsedOptions.baseUrl || request.endpoint.DEFAULTS.baseUrl;
+
+  if (GHES_V3_SUFFIX_REGEX.test(baseUrl)) {
+    requestOptions.url = baseUrl.replace(GHES_V3_SUFFIX_REGEX, "/api/graphql");
+  }
+
   return request(requestOptions).then(response => {
     if (response.data.errors) {
+      const headers = {};
+
+      for (const key of Object.keys(response.headers)) {
+        headers[key] = response.headers[key];
+      }
+
       throw new GraphqlError(requestOptions, {
+        headers,
         data: response.data
       });
     }
@@ -73581,8 +76340,140 @@ exports.withCustomRequest = withCustomRequest;
 /***/ }),
 /* 899 */,
 /* 900 */,
-/* 901 */,
-/* 902 */,
+/* 901 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+"use strict";
+
+const {constants: BufferConstants} = __webpack_require__(293);
+const stream = __webpack_require__(794);
+const {promisify} = __webpack_require__(669);
+const bufferStream = __webpack_require__(443);
+
+const streamPipelinePromisified = promisify(stream.pipeline);
+
+class MaxBufferError extends Error {
+	constructor() {
+		super('maxBuffer exceeded');
+		this.name = 'MaxBufferError';
+	}
+}
+
+async function getStream(inputStream, options) {
+	if (!inputStream) {
+		throw new Error('Expected a stream');
+	}
+
+	options = {
+		maxBuffer: Infinity,
+		...options
+	};
+
+	const {maxBuffer} = options;
+	const stream = bufferStream(options);
+
+	await new Promise((resolve, reject) => {
+		const rejectPromise = error => {
+			// Don't retrieve an oversized buffer.
+			if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
+				error.bufferedData = stream.getBufferedValue();
+			}
+
+			reject(error);
+		};
+
+		(async () => {
+			try {
+				await streamPipelinePromisified(inputStream, stream);
+				resolve();
+			} catch (error) {
+				rejectPromise(error);
+			}
+		})();
+
+		stream.on('data', () => {
+			if (stream.getBufferedLength() > maxBuffer) {
+				rejectPromise(new MaxBufferError());
+			}
+		});
+	});
+
+	return stream.getBufferedValue();
+}
+
+module.exports = getStream;
+module.exports.buffer = (stream, options) => getStream(stream, {...options, encoding: 'buffer'});
+module.exports.array = (stream, options) => getStream(stream, {...options, array: true});
+module.exports.MaxBufferError = MaxBufferError;
+
+
+/***/ }),
+/* 902 */
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+const {uniqBy, intersection} = __webpack_require__(557);
+const semver = __webpack_require__(876);
+const semverDiff = __webpack_require__(104);
+const getLastRelease = __webpack_require__(913);
+const {makeTag, getLowerBound} = __webpack_require__(946);
+
+/**
+ * Find releases that have been merged from from a higher branch but not added on the channel of the current branch.
+ *
+ * @param {Object} context semantic-release context.
+ *
+ * @return {Array<Object>} Last release and next release to be added on the channel of the current branch.
+ */
+module.exports = (context) => {
+  const {
+    branch,
+    branches,
+    options: {tagFormat},
+  } = context;
+
+  const higherChannels = branches
+    // Consider only releases of higher branches
+    .slice(branches.findIndex(({name}) => name === branch.name) + 1)
+    // Exclude prerelease branches
+    .filter(({type}) => type !== 'prerelease')
+    .map(({channel}) => channel || null);
+
+  const versiontoAdd = uniqBy(
+    branch.tags.filter(
+      ({channels, version}) =>
+        !channels.includes(branch.channel || null) &&
+        intersection(channels, higherChannels).length > 0 &&
+        (branch.type !== 'maintenance' || semver.gte(version, getLowerBound(branch.mergeRange)))
+    ),
+    'version'
+  ).sort((a, b) => semver.compare(b.version, a.version))[0];
+
+  if (versiontoAdd) {
+    const {version, gitTag, channels} = versiontoAdd;
+    const lastRelease = getLastRelease(context, {before: version});
+    if (semver.gt(getLastRelease(context).version, version)) {
+      return;
+    }
+
+    const type = lastRelease.version ? semverDiff(lastRelease.version, version) : 'major';
+    const name = makeTag(tagFormat, version);
+    return {
+      lastRelease,
+      currentRelease: {type, version, channels, gitTag, name, gitHead: gitTag},
+      nextRelease: {
+        type,
+        version,
+        channel: branch.channel || null,
+        gitTag: makeTag(tagFormat, version),
+        name,
+        gitHead: gitTag,
+      },
+    };
+  }
+};
+
+
+/***/ }),
 /* 903 */,
 /* 904 */,
 /* 905 */
@@ -73729,6 +76620,8 @@ module.exports = class Renderer {
         code = out;
       }
     }
+
+    code = code.replace(/\n$/, '') + '\n';
 
     if (!lang) {
       return '<pre><code>'
@@ -73877,10 +76770,15 @@ module.exports = class Renderer {
 /* 910 */
 /***/ (function(module) {
 
-module.exports = ["0BSD","AAL","ADSL","AFL-1.1","AFL-1.2","AFL-2.0","AFL-2.1","AFL-3.0","AGPL-1.0-only","AGPL-1.0-or-later","AGPL-3.0-only","AGPL-3.0-or-later","AMDPLPA","AML","AMPAS","ANTLR-PD","APAFML","APL-1.0","APSL-1.0","APSL-1.1","APSL-1.2","APSL-2.0","Abstyles","Adobe-2006","Adobe-Glyph","Afmparse","Aladdin","Apache-1.0","Apache-1.1","Apache-2.0","Artistic-1.0","Artistic-1.0-Perl","Artistic-1.0-cl8","Artistic-2.0","BSD-1-Clause","BSD-2-Clause","BSD-2-Clause-FreeBSD","BSD-2-Clause-NetBSD","BSD-2-Clause-Patent","BSD-3-Clause","BSD-3-Clause-Attribution","BSD-3-Clause-Clear","BSD-3-Clause-LBNL","BSD-3-Clause-No-Nuclear-License","BSD-3-Clause-No-Nuclear-License-2014","BSD-3-Clause-No-Nuclear-Warranty","BSD-3-Clause-Open-MPI","BSD-4-Clause","BSD-4-Clause-UC","BSD-Protection","BSD-Source-Code","BSL-1.0","Bahyph","Barr","Beerware","BitTorrent-1.0","BitTorrent-1.1","BlueOak-1.0.0","Borceux","CATOSL-1.1","CC-BY-1.0","CC-BY-2.0","CC-BY-2.5","CC-BY-3.0","CC-BY-4.0","CC-BY-NC-1.0","CC-BY-NC-2.0","CC-BY-NC-2.5","CC-BY-NC-3.0","CC-BY-NC-4.0","CC-BY-NC-ND-1.0","CC-BY-NC-ND-2.0","CC-BY-NC-ND-2.5","CC-BY-NC-ND-3.0","CC-BY-NC-ND-4.0","CC-BY-NC-SA-1.0","CC-BY-NC-SA-2.0","CC-BY-NC-SA-2.5","CC-BY-NC-SA-3.0","CC-BY-NC-SA-4.0","CC-BY-ND-1.0","CC-BY-ND-2.0","CC-BY-ND-2.5","CC-BY-ND-3.0","CC-BY-ND-4.0","CC-BY-SA-1.0","CC-BY-SA-2.0","CC-BY-SA-2.5","CC-BY-SA-3.0","CC-BY-SA-4.0","CC-PDDC","CC0-1.0","CDDL-1.0","CDDL-1.1","CDLA-Permissive-1.0","CDLA-Sharing-1.0","CECILL-1.0","CECILL-1.1","CECILL-2.0","CECILL-2.1","CECILL-B","CECILL-C","CERN-OHL-1.1","CERN-OHL-1.2","CNRI-Jython","CNRI-Python","CNRI-Python-GPL-Compatible","CPAL-1.0","CPL-1.0","CPOL-1.02","CUA-OPL-1.0","Caldera","ClArtistic","Condor-1.1","Crossword","CrystalStacker","Cube","D-FSL-1.0","DOC","DSDP","Dotseqn","ECL-1.0","ECL-2.0","EFL-1.0","EFL-2.0","EPL-1.0","EPL-2.0","EUDatagrid","EUPL-1.0","EUPL-1.1","EUPL-1.2","Entessa","ErlPL-1.1","Eurosym","FSFAP","FSFUL","FSFULLR","FTL","Fair","Frameworx-1.0","FreeImage","GFDL-1.1-only","GFDL-1.1-or-later","GFDL-1.2-only","GFDL-1.2-or-later","GFDL-1.3-only","GFDL-1.3-or-later","GL2PS","GPL-1.0-only","GPL-1.0-or-later","GPL-2.0-only","GPL-2.0-or-later","GPL-3.0-only","GPL-3.0-or-later","Giftware","Glide","Glulxe","HPND","HPND-sell-variant","HaskellReport","IBM-pibs","ICU","IJG","IPA","IPL-1.0","ISC","ImageMagick","Imlib2","Info-ZIP","Intel","Intel-ACPI","Interbase-1.0","JPNIC","JSON","JasPer-2.0","LAL-1.2","LAL-1.3","LGPL-2.0-only","LGPL-2.0-or-later","LGPL-2.1-only","LGPL-2.1-or-later","LGPL-3.0-only","LGPL-3.0-or-later","LGPLLR","LPL-1.0","LPL-1.02","LPPL-1.0","LPPL-1.1","LPPL-1.2","LPPL-1.3a","LPPL-1.3c","Latex2e","Leptonica","LiLiQ-P-1.1","LiLiQ-R-1.1","LiLiQ-Rplus-1.1","Libpng","Linux-OpenIB","MIT","MIT-0","MIT-CMU","MIT-advertising","MIT-enna","MIT-feh","MITNFA","MPL-1.0","MPL-1.1","MPL-2.0","MPL-2.0-no-copyleft-exception","MS-PL","MS-RL","MTLL","MakeIndex","MirOS","Motosoto","Multics","Mup","NASA-1.3","NBPL-1.0","NCSA","NGPL","NLOD-1.0","NLPL","NOSL","NPL-1.0","NPL-1.1","NPOSL-3.0","NRL","NTP","Naumen","Net-SNMP","NetCDF","Newsletr","Nokia","Noweb","OCCT-PL","OCLC-2.0","ODC-By-1.0","ODbL-1.0","OFL-1.0","OFL-1.1","OGL-UK-1.0","OGL-UK-2.0","OGL-UK-3.0","OGTSL","OLDAP-1.1","OLDAP-1.2","OLDAP-1.3","OLDAP-1.4","OLDAP-2.0","OLDAP-2.0.1","OLDAP-2.1","OLDAP-2.2","OLDAP-2.2.1","OLDAP-2.2.2","OLDAP-2.3","OLDAP-2.4","OLDAP-2.5","OLDAP-2.6","OLDAP-2.7","OLDAP-2.8","OML","OPL-1.0","OSET-PL-2.1","OSL-1.0","OSL-1.1","OSL-2.0","OSL-2.1","OSL-3.0","OpenSSL","PDDL-1.0","PHP-3.0","PHP-3.01","Parity-6.0.0","Plexus","PostgreSQL","Python-2.0","QPL-1.0","Qhull","RHeCos-1.1","RPL-1.1","RPL-1.5","RPSL-1.0","RSA-MD","RSCPL","Rdisc","Ruby","SAX-PD","SCEA","SGI-B-1.0","SGI-B-1.1","SGI-B-2.0","SHL-0.5","SHL-0.51","SISSL","SISSL-1.2","SMLNJ","SMPPL","SNIA","SPL-1.0","SSPL-1.0","SWL","Saxpath","Sendmail","Sendmail-8.23","SimPL-2.0","Sleepycat","Spencer-86","Spencer-94","Spencer-99","SugarCRM-1.1.3","TAPR-OHL-1.0","TCL","TCP-wrappers","TMate","TORQUE-1.1","TOSL","TU-Berlin-1.0","TU-Berlin-2.0","UPL-1.0","Unicode-DFS-2015","Unicode-DFS-2016","Unicode-TOU","Unlicense","VOSTROM","VSL-1.0","Vim","W3C","W3C-19980720","W3C-20150513","WTFPL","Watcom-1.0","Wsuipa","X11","XFree86-1.1","XSkat","Xerox","Xnet","YPL-1.0","YPL-1.1","ZPL-1.1","ZPL-2.0","ZPL-2.1","Zed","Zend-2.0","Zimbra-1.3","Zimbra-1.4","Zlib","blessing","bzip2-1.0.5","bzip2-1.0.6","copyleft-next-0.3.0","copyleft-next-0.3.1","curl","diffmark","dvipdfm","eGenix","gSOAP-1.3b","gnuplot","iMatix","libpng-2.0","libtiff","mpich2","psfrag","psutils","xinetd","xpp","zlib-acknowledgement"];
+module.exports = ["0BSD","AAL","ADSL","AFL-1.1","AFL-1.2","AFL-2.0","AFL-2.1","AFL-3.0","AGPL-1.0-only","AGPL-1.0-or-later","AGPL-3.0-only","AGPL-3.0-or-later","AMDPLPA","AML","AMPAS","ANTLR-PD","ANTLR-PD-fallback","APAFML","APL-1.0","APSL-1.0","APSL-1.1","APSL-1.2","APSL-2.0","Abstyles","Adobe-2006","Adobe-Glyph","Afmparse","Aladdin","Apache-1.0","Apache-1.1","Apache-2.0","Artistic-1.0","Artistic-1.0-Perl","Artistic-1.0-cl8","Artistic-2.0","BSD-1-Clause","BSD-2-Clause","BSD-2-Clause-Patent","BSD-2-Clause-Views","BSD-3-Clause","BSD-3-Clause-Attribution","BSD-3-Clause-Clear","BSD-3-Clause-LBNL","BSD-3-Clause-No-Nuclear-License","BSD-3-Clause-No-Nuclear-License-2014","BSD-3-Clause-No-Nuclear-Warranty","BSD-3-Clause-Open-MPI","BSD-4-Clause","BSD-4-Clause-UC","BSD-Protection","BSD-Source-Code","BSL-1.0","BUSL-1.1","Bahyph","Barr","Beerware","BitTorrent-1.0","BitTorrent-1.1","BlueOak-1.0.0","Borceux","CAL-1.0","CAL-1.0-Combined-Work-Exception","CATOSL-1.1","CC-BY-1.0","CC-BY-2.0","CC-BY-2.5","CC-BY-3.0","CC-BY-3.0-AT","CC-BY-3.0-US","CC-BY-4.0","CC-BY-NC-1.0","CC-BY-NC-2.0","CC-BY-NC-2.5","CC-BY-NC-3.0","CC-BY-NC-4.0","CC-BY-NC-ND-1.0","CC-BY-NC-ND-2.0","CC-BY-NC-ND-2.5","CC-BY-NC-ND-3.0","CC-BY-NC-ND-3.0-IGO","CC-BY-NC-ND-4.0","CC-BY-NC-SA-1.0","CC-BY-NC-SA-2.0","CC-BY-NC-SA-2.5","CC-BY-NC-SA-3.0","CC-BY-NC-SA-4.0","CC-BY-ND-1.0","CC-BY-ND-2.0","CC-BY-ND-2.5","CC-BY-ND-3.0","CC-BY-ND-4.0","CC-BY-SA-1.0","CC-BY-SA-2.0","CC-BY-SA-2.0-UK","CC-BY-SA-2.5","CC-BY-SA-3.0","CC-BY-SA-3.0-AT","CC-BY-SA-4.0","CC-PDDC","CC0-1.0","CDDL-1.0","CDDL-1.1","CDLA-Permissive-1.0","CDLA-Sharing-1.0","CECILL-1.0","CECILL-1.1","CECILL-2.0","CECILL-2.1","CECILL-B","CECILL-C","CERN-OHL-1.1","CERN-OHL-1.2","CERN-OHL-P-2.0","CERN-OHL-S-2.0","CERN-OHL-W-2.0","CNRI-Jython","CNRI-Python","CNRI-Python-GPL-Compatible","CPAL-1.0","CPL-1.0","CPOL-1.02","CUA-OPL-1.0","Caldera","ClArtistic","Condor-1.1","Crossword","CrystalStacker","Cube","D-FSL-1.0","DOC","DSDP","Dotseqn","ECL-1.0","ECL-2.0","EFL-1.0","EFL-2.0","EPICS","EPL-1.0","EPL-2.0","EUDatagrid","EUPL-1.0","EUPL-1.1","EUPL-1.2","Entessa","ErlPL-1.1","Eurosym","FSFAP","FSFUL","FSFULLR","FTL","Fair","Frameworx-1.0","FreeImage","GFDL-1.1-invariants-only","GFDL-1.1-invariants-or-later","GFDL-1.1-no-invariants-only","GFDL-1.1-no-invariants-or-later","GFDL-1.1-only","GFDL-1.1-or-later","GFDL-1.2-invariants-only","GFDL-1.2-invariants-or-later","GFDL-1.2-no-invariants-only","GFDL-1.2-no-invariants-or-later","GFDL-1.2-only","GFDL-1.2-or-later","GFDL-1.3-invariants-only","GFDL-1.3-invariants-or-later","GFDL-1.3-no-invariants-only","GFDL-1.3-no-invariants-or-later","GFDL-1.3-only","GFDL-1.3-or-later","GL2PS","GLWTPL","GPL-1.0-only","GPL-1.0-or-later","GPL-2.0-only","GPL-2.0-or-later","GPL-3.0-only","GPL-3.0-or-later","Giftware","Glide","Glulxe","HPND","HPND-sell-variant","HTMLTIDY","HaskellReport","Hippocratic-2.1","IBM-pibs","ICU","IJG","IPA","IPL-1.0","ISC","ImageMagick","Imlib2","Info-ZIP","Intel","Intel-ACPI","Interbase-1.0","JPNIC","JSON","JasPer-2.0","LAL-1.2","LAL-1.3","LGPL-2.0-only","LGPL-2.0-or-later","LGPL-2.1-only","LGPL-2.1-or-later","LGPL-3.0-only","LGPL-3.0-or-later","LGPLLR","LPL-1.0","LPL-1.02","LPPL-1.0","LPPL-1.1","LPPL-1.2","LPPL-1.3a","LPPL-1.3c","Latex2e","Leptonica","LiLiQ-P-1.1","LiLiQ-R-1.1","LiLiQ-Rplus-1.1","Libpng","Linux-OpenIB","MIT","MIT-0","MIT-CMU","MIT-advertising","MIT-enna","MIT-feh","MIT-open-group","MITNFA","MPL-1.0","MPL-1.1","MPL-2.0","MPL-2.0-no-copyleft-exception","MS-PL","MS-RL","MTLL","MakeIndex","MirOS","Motosoto","MulanPSL-1.0","MulanPSL-2.0","Multics","Mup","NASA-1.3","NBPL-1.0","NCGL-UK-2.0","NCSA","NGPL","NIST-PD","NIST-PD-fallback","NLOD-1.0","NLPL","NOSL","NPL-1.0","NPL-1.1","NPOSL-3.0","NRL","NTP","NTP-0","Naumen","Net-SNMP","NetCDF","Newsletr","Nokia","Noweb","O-UDA-1.0","OCCT-PL","OCLC-2.0","ODC-By-1.0","ODbL-1.0","OFL-1.0","OFL-1.0-RFN","OFL-1.0-no-RFN","OFL-1.1","OFL-1.1-RFN","OFL-1.1-no-RFN","OGC-1.0","OGL-Canada-2.0","OGL-UK-1.0","OGL-UK-2.0","OGL-UK-3.0","OGTSL","OLDAP-1.1","OLDAP-1.2","OLDAP-1.3","OLDAP-1.4","OLDAP-2.0","OLDAP-2.0.1","OLDAP-2.1","OLDAP-2.2","OLDAP-2.2.1","OLDAP-2.2.2","OLDAP-2.3","OLDAP-2.4","OLDAP-2.5","OLDAP-2.6","OLDAP-2.7","OLDAP-2.8","OML","OPL-1.0","OSET-PL-2.1","OSL-1.0","OSL-1.1","OSL-2.0","OSL-2.1","OSL-3.0","OpenSSL","PDDL-1.0","PHP-3.0","PHP-3.01","PSF-2.0","Parity-6.0.0","Parity-7.0.0","Plexus","PolyForm-Noncommercial-1.0.0","PolyForm-Small-Business-1.0.0","PostgreSQL","Python-2.0","QPL-1.0","Qhull","RHeCos-1.1","RPL-1.1","RPL-1.5","RPSL-1.0","RSA-MD","RSCPL","Rdisc","Ruby","SAX-PD","SCEA","SGI-B-1.0","SGI-B-1.1","SGI-B-2.0","SHL-0.5","SHL-0.51","SISSL","SISSL-1.2","SMLNJ","SMPPL","SNIA","SPL-1.0","SSH-OpenSSH","SSH-short","SSPL-1.0","SWL","Saxpath","Sendmail","Sendmail-8.23","SimPL-2.0","Sleepycat","Spencer-86","Spencer-94","Spencer-99","SugarCRM-1.1.3","TAPR-OHL-1.0","TCL","TCP-wrappers","TMate","TORQUE-1.1","TOSL","TU-Berlin-1.0","TU-Berlin-2.0","UCL-1.0","UPL-1.0","Unicode-DFS-2015","Unicode-DFS-2016","Unicode-TOU","Unlicense","VOSTROM","VSL-1.0","Vim","W3C","W3C-19980720","W3C-20150513","WTFPL","Watcom-1.0","Wsuipa","X11","XFree86-1.1","XSkat","Xerox","Xnet","YPL-1.0","YPL-1.1","ZPL-1.1","ZPL-2.0","ZPL-2.1","Zed","Zend-2.0","Zimbra-1.3","Zimbra-1.4","Zlib","blessing","bzip2-1.0.5","bzip2-1.0.6","copyleft-next-0.3.0","copyleft-next-0.3.1","curl","diffmark","dvipdfm","eGenix","etalab-2.0","gSOAP-1.3b","gnuplot","iMatix","libpng-2.0","libselinux-1.0","libtiff","mpich2","psfrag","psutils","xinetd","xpp","zlib-acknowledgement"];
 
 /***/ }),
-/* 911 */,
+/* 911 */
+/***/ (function(module) {
+
+module.exports = {"assert":true,"assert/strict":">= 15","async_hooks":">= 8","buffer_ieee754":"< 0.9.7","buffer":true,"child_process":true,"cluster":true,"console":true,"constants":true,"crypto":true,"_debug_agent":">= 1 && < 8","_debugger":"< 8","dgram":true,"diagnostics_channel":">= 15.1","dns":true,"dns/promises":">= 15","domain":">= 0.7.12","events":true,"freelist":"< 6","fs":true,"fs/promises":[">= 10 && < 10.1",">= 14"],"_http_agent":">= 0.11.1","_http_client":">= 0.11.1","_http_common":">= 0.11.1","_http_incoming":">= 0.11.1","_http_outgoing":">= 0.11.1","_http_server":">= 0.11.1","http":true,"http2":">= 8.8","https":true,"inspector":">= 8.0.0","_linklist":"< 8","module":true,"net":true,"node-inspect/lib/_inspect":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_client":">= 7.6.0 && < 12","node-inspect/lib/internal/inspect_repl":">= 7.6.0 && < 12","os":true,"path":true,"path/posix":">= 15.3","path/win32":">= 15.3","perf_hooks":">= 8.5","process":">= 1","punycode":true,"querystring":true,"readline":true,"repl":true,"smalloc":">= 0.11.5 && < 3","_stream_duplex":">= 0.9.4","_stream_transform":">= 0.9.4","_stream_wrap":">= 1.4.1","_stream_passthrough":">= 0.9.4","_stream_readable":">= 0.9.4","_stream_writable":">= 0.9.4","stream":true,"stream/promises":">= 15","string_decoder":true,"sys":[">= 0.6 && < 0.7",">= 0.8"],"timers":true,"timers/promises":">= 15","_tls_common":">= 0.11.13","_tls_legacy":">= 0.11.3 && < 10","_tls_wrap":">= 0.11.3","tls":true,"trace_events":">= 10","tty":true,"url":true,"util":true,"util/types":">= 15.3","v8/tools/arguments":">= 10 && < 12","v8/tools/codemap":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/consarray":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/csvparser":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/logreader":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/profile_view":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8/tools/splaytree":[">= 4.4.0 && < 5",">= 5.2.0 && < 12"],"v8":">= 1","vm":true,"wasi":">= 13.4 && < 13.5","worker_threads":">= 11.7","zlib":true};
+
+/***/ }),
 /* 912 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -73889,7 +76787,7 @@ var path = __webpack_require__(622);
 var caller = __webpack_require__(200);
 var nodeModulesPaths = __webpack_require__(455);
 var normalizeOptions = __webpack_require__(666);
-var isCore = __webpack_require__(153);
+var isCore = __webpack_require__(884);
 
 var realpathFS = fs.realpath && typeof fs.realpath.native === 'function' ? fs.realpath.native : fs.realpath;
 
@@ -73928,6 +76826,20 @@ var maybeRealpath = function maybeRealpath(realpath, x, opts, cb) {
     }
 };
 
+var defaultReadPackage = function defaultReadPackage(readFile, pkgfile, cb) {
+    readFile(pkgfile, function (readFileErr, body) {
+        if (readFileErr) cb(readFileErr);
+        else {
+            try {
+                var pkg = JSON.parse(body);
+                cb(null, pkg);
+            } catch (jsonErr) {
+                cb(null);
+            }
+        }
+    });
+};
+
 var getPackageCandidates = function getPackageCandidates(x, start, opts) {
     var dirs = nodeModulesPaths(start, opts, x);
     for (var i = 0; i < dirs.length; i++) {
@@ -73956,9 +76868,17 @@ module.exports = function resolve(x, options, callback) {
     var isDirectory = opts.isDirectory || defaultIsDir;
     var readFile = opts.readFile || fs.readFile;
     var realpath = opts.realpath || defaultRealpath;
+    var readPackage = opts.readPackage || defaultReadPackage;
+    if (opts.readFile && opts.readPackage) {
+        var conflictErr = new TypeError('`readFile` and `readPackage` are mutually exclusive.');
+        return process.nextTick(function () {
+            cb(conflictErr);
+        });
+    }
     var packageIterator = opts.packageIterator;
 
     var extensions = opts.extensions || ['.js'];
+    var includeCoreModules = opts.includeCoreModules !== false;
     var basedir = opts.basedir || path.dirname(caller());
     var parent = opts.filename || basedir;
 
@@ -73985,7 +76905,7 @@ module.exports = function resolve(x, options, callback) {
             if ((/\/$/).test(x) && res === basedir) {
                 loadAsDirectory(res, opts.package, onfile);
             } else loadAsFile(res, opts.package, onfile);
-        } else if (isCore(x)) {
+        } else if (includeCoreModules && isCore(x)) {
             return cb(null, x);
         } else loadNodeModules(x, basedir, function (err, n, pkg) {
             if (err) cb(err);
@@ -74082,9 +77002,10 @@ module.exports = function resolve(x, options, callback) {
                 // on err, ex is false
                 if (!ex) return loadpkg(path.dirname(dir), cb);
 
-                readFile(pkgfile, function (err, body) {
+                readPackage(readFile, pkgfile, function (err, pkgParam) {
                     if (err) cb(err);
-                    try { var pkg = JSON.parse(body); } catch (jsonErr) {}
+
+                    var pkg = pkgParam;
 
                     if (pkg && opts.packageFilter) {
                         pkg = opts.packageFilter(pkg, pkgfile);
@@ -74110,11 +77031,10 @@ module.exports = function resolve(x, options, callback) {
                 if (err) return cb(err);
                 if (!ex) return loadAsFile(path.join(x, 'index'), fpkg, cb);
 
-                readFile(pkgfile, function (err, body) {
+                readPackage(readFile, pkgfile, function (err, pkgParam) {
                     if (err) return cb(err);
-                    try {
-                        var pkg = JSON.parse(body);
-                    } catch (jsonErr) {}
+
+                    var pkg = pkgParam;
 
                     if (pkg && opts.packageFilter) {
                         pkg = opts.packageFilter(pkg, pkgfile);
@@ -74279,7 +77199,7 @@ const verify = __webpack_require__(715);
 const getNextVersion = __webpack_require__(29);
 const getCommits = __webpack_require__(738);
 const getLastRelease = __webpack_require__(913);
-const getReleaseToAdd = __webpack_require__(79);
+const getReleaseToAdd = __webpack_require__(902);
 const {extractErrors, makeTag} = __webpack_require__(946);
 const getGitAuthUrl = __webpack_require__(148);
 const getBranches = __webpack_require__(730);
@@ -74645,10 +77565,14 @@ try {
   process.cwd()
 } catch (er) {}
 
-var chdir = process.chdir
-process.chdir = function(d) {
-  cwd = null
-  chdir.call(process, d)
+// This check is needed until node.js 12 is required
+if (typeof process.chdir === 'function') {
+  var chdir = process.chdir
+  process.chdir = function (d) {
+    cwd = null
+    chdir.call(process, d)
+  }
+  if (Object.setPrototypeOf) Object.setPrototypeOf(process.chdir, chdir)
 }
 
 module.exports = patch
@@ -74763,7 +77687,7 @@ function patch (fs) {
     }
 
     // This ensures `util.promisify` works as it does for native `fs.read`.
-    read.__proto__ = fs$read
+    if (Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read)
     return read
   })(fs.read)
 
@@ -75056,147 +77980,7 @@ module.exports = inc
 
 /***/ }),
 /* 929 */,
-/* 930 */
-/***/ (function(module) {
-
-"use strict";
-
-const TEMPLATE_REGEX = /(?:\\(u(?:[a-f\d]{4}|\{[a-f\d]{1,6}\})|x[a-f\d]{2}|.))|(?:\{(~)?(\w+(?:\([^)]*\))?(?:\.\w+(?:\([^)]*\))?)*)(?:[ \t]|(?=\r?\n)))|(\})|((?:.|[\r\n\f])+?)/gi;
-const STYLE_REGEX = /(?:^|\.)(\w+)(?:\(([^)]*)\))?/g;
-const STRING_REGEX = /^(['"])((?:\\.|(?!\1)[^\\])*)\1$/;
-const ESCAPE_REGEX = /\\(u(?:[a-f\d]{4}|{[a-f\d]{1,6}})|x[a-f\d]{2}|.)|([^\\])/gi;
-
-const ESCAPES = new Map([
-	['n', '\n'],
-	['r', '\r'],
-	['t', '\t'],
-	['b', '\b'],
-	['f', '\f'],
-	['v', '\v'],
-	['0', '\0'],
-	['\\', '\\'],
-	['e', '\u001B'],
-	['a', '\u0007']
-]);
-
-function unescape(c) {
-	const u = c[0] === 'u';
-	const bracket = c[1] === '{';
-
-	if ((u && !bracket && c.length === 5) || (c[0] === 'x' && c.length === 3)) {
-		return String.fromCharCode(parseInt(c.slice(1), 16));
-	}
-
-	if (u && bracket) {
-		return String.fromCodePoint(parseInt(c.slice(2, -1), 16));
-	}
-
-	return ESCAPES.get(c) || c;
-}
-
-function parseArguments(name, arguments_) {
-	const results = [];
-	const chunks = arguments_.trim().split(/\s*,\s*/g);
-	let matches;
-
-	for (const chunk of chunks) {
-		const number = Number(chunk);
-		if (!Number.isNaN(number)) {
-			results.push(number);
-		} else if ((matches = chunk.match(STRING_REGEX))) {
-			results.push(matches[2].replace(ESCAPE_REGEX, (m, escape, character) => escape ? unescape(escape) : character));
-		} else {
-			throw new Error(`Invalid Chalk template style argument: ${chunk} (in style '${name}')`);
-		}
-	}
-
-	return results;
-}
-
-function parseStyle(style) {
-	STYLE_REGEX.lastIndex = 0;
-
-	const results = [];
-	let matches;
-
-	while ((matches = STYLE_REGEX.exec(style)) !== null) {
-		const name = matches[1];
-
-		if (matches[2]) {
-			const args = parseArguments(name, matches[2]);
-			results.push([name].concat(args));
-		} else {
-			results.push([name]);
-		}
-	}
-
-	return results;
-}
-
-function buildStyle(chalk, styles) {
-	const enabled = {};
-
-	for (const layer of styles) {
-		for (const style of layer.styles) {
-			enabled[style[0]] = layer.inverse ? null : style.slice(1);
-		}
-	}
-
-	let current = chalk;
-	for (const [styleName, styles] of Object.entries(enabled)) {
-		if (!Array.isArray(styles)) {
-			continue;
-		}
-
-		if (!(styleName in current)) {
-			throw new Error(`Unknown Chalk style: ${styleName}`);
-		}
-
-		current = styles.length > 0 ? current[styleName](...styles) : current[styleName];
-	}
-
-	return current;
-}
-
-module.exports = (chalk, temporary) => {
-	const styles = [];
-	const chunks = [];
-	let chunk = [];
-
-	// eslint-disable-next-line max-params
-	temporary.replace(TEMPLATE_REGEX, (m, escapeCharacter, inverse, style, close, character) => {
-		if (escapeCharacter) {
-			chunk.push(unescape(escapeCharacter));
-		} else if (style) {
-			const string = chunk.join('');
-			chunk = [];
-			chunks.push(styles.length === 0 ? string : buildStyle(chalk, styles)(string));
-			styles.push({inverse, styles: parseStyle(style)});
-		} else if (close) {
-			if (styles.length === 0) {
-				throw new Error('Found extraneous } in Chalk template literal');
-			}
-
-			chunks.push(buildStyle(chalk, styles)(chunk.join('')));
-			chunk = [];
-			styles.pop();
-		} else {
-			chunk.push(character);
-		}
-	});
-
-	chunks.push(chunk.join(''));
-
-	if (styles.length > 0) {
-		const errMessage = `Chalk template literal is missing ${styles.length} closing bracket${styles.length === 1 ? '' : 's'} (\`}\`)`;
-		throw new Error(errMessage);
-	}
-
-	return chunks.join('');
-};
-
-
-/***/ }),
+/* 930 */,
 /* 931 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -75288,7 +78072,134 @@ if (util && util.inspect && util.inspect.custom) {
 /* 935 */,
 /* 936 */,
 /* 937 */,
-/* 938 */,
+/* 938 */
+/***/ (function(module) {
+
+"use strict";
+
+
+const hexify = char => {
+  const h = char.charCodeAt(0).toString(16).toUpperCase()
+  return '0x' + (h.length % 2 ? '0' : '') + h
+}
+
+const parseError = (e, txt, context) => {
+  if (!txt) {
+    return {
+      message: e.message + ' while parsing empty string',
+      position: 0,
+    }
+  }
+  const badToken = e.message.match(/^Unexpected token (.) .*position\s+(\d+)/i)
+  const errIdx = badToken ? +badToken[2]
+    : e.message.match(/^Unexpected end of JSON.*/i) ? txt.length - 1
+    : null
+
+  const msg = badToken ? e.message.replace(/^Unexpected token ./, `Unexpected token ${
+      JSON.stringify(badToken[1])
+    } (${hexify(badToken[1])})`)
+    : e.message
+
+  if (errIdx !== null && errIdx !== undefined) {
+    const start = errIdx <= context ? 0
+      : errIdx - context
+
+    const end = errIdx + context >= txt.length ? txt.length
+      : errIdx + context
+
+    const slice = (start === 0 ? '' : '...') +
+      txt.slice(start, end) +
+      (end === txt.length ? '' : '...')
+
+    const near = txt === slice ? '' : 'near '
+
+    return {
+      message: msg + ` while parsing ${near}${JSON.stringify(slice)}`,
+      position: errIdx,
+    }
+  } else {
+    return {
+      message: msg + ` while parsing '${txt.slice(0, context * 2)}'`,
+      position: 0,
+    }
+  }
+}
+
+class JSONParseError extends SyntaxError {
+  constructor (er, txt, context, caller) {
+    context = context || 20
+    const metadata = parseError(er, txt, context)
+    super(metadata.message)
+    Object.assign(this, metadata)
+    this.code = 'EJSONPARSE'
+    this.systemError = er
+    Error.captureStackTrace(this, caller || this.constructor)
+  }
+  get name () { return this.constructor.name }
+  set name (n) {}
+  get [Symbol.toStringTag] () { return this.constructor.name }
+}
+
+const kIndent = Symbol.for('indent')
+const kNewline = Symbol.for('newline')
+// only respect indentation if we got a line break, otherwise squash it
+// things other than objects and arrays aren't indented, so ignore those
+// Important: in both of these regexps, the $1 capture group is the newline
+// or undefined, and the $2 capture group is the indent, or undefined.
+const formatRE = /^\s*[{\[]((?:\r?\n)+)([\s\t]*)/
+const emptyRE = /^(?:\{\}|\[\])((?:\r?\n)+)?$/
+
+const parseJson = (txt, reviver, context) => {
+  const parseText = stripBOM(txt)
+  context = context || 20
+  try {
+    // get the indentation so that we can save it back nicely
+    // if the file starts with {" then we have an indent of '', ie, none
+    // otherwise, pick the indentation of the next line after the first \n
+    // If the pattern doesn't match, then it means no indentation.
+    // JSON.stringify ignores symbols, so this is reasonably safe.
+    // if the string is '{}' or '[]', then use the default 2-space indent.
+    const [, newline = '\n', indent = '  '] = parseText.match(emptyRE) ||
+      parseText.match(formatRE) ||
+      [, '', '']
+
+    const result = JSON.parse(parseText, reviver)
+    if (result && typeof result === 'object') {
+      result[kNewline] = newline
+      result[kIndent] = indent
+    }
+    return result
+  } catch (e) {
+    if (typeof txt !== 'string' && !Buffer.isBuffer(txt)) {
+      const isEmptyArray = Array.isArray(txt) && txt.length === 0
+      throw Object.assign(new TypeError(
+        `Cannot parse ${isEmptyArray ? 'an empty array' : String(txt)}`
+      ), {
+        code: 'EJSONPARSE',
+        systemError: e,
+      })
+    }
+
+    throw new JSONParseError(e, parseText, context, parseJson)
+  }
+}
+
+// Remove byte order marker. This catches EF BB BF (the UTF-8 BOM)
+// because the buffer-to-string conversion in `fs.readFileSync()`
+// translates it to FEFF, the UTF-16 BOM.
+const stripBOM = txt => String(txt).replace(/^\uFEFF/, '')
+
+module.exports = parseJson
+parseJson.JSONParseError = JSONParseError
+
+parseJson.noExceptions = (txt, reviver) => {
+  try {
+    return JSON.parse(stripBOM(txt), reviver)
+  } catch (e) {}
+}
+
+
+/***/ }),
 /* 939 */,
 /* 940 */
 /***/ (function(module) {
@@ -75322,7 +78233,7 @@ function extend() {
 "use strict";
 
 const path = __webpack_require__(622);
-const findUp = __webpack_require__(957);
+const findUp = __webpack_require__(889);
 const loadJsonFile = __webpack_require__(571);
 
 const filepaths = new WeakMap();
@@ -75533,7 +78444,31 @@ module.exports = function (tokens) {
 
 
 /***/ }),
-/* 945 */,
+/* 945 */
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+Object.defineProperty(exports,"__esModule",{value:true});exports.SIGRTMAX=exports.getRealtimeSignals=void 0;
+const getRealtimeSignals=function(){
+const length=SIGRTMAX-SIGRTMIN+1;
+return Array.from({length},getRealtimeSignal);
+};exports.getRealtimeSignals=getRealtimeSignals;
+
+const getRealtimeSignal=function(value,index){
+return{
+name:`SIGRT${index+1}`,
+number:SIGRTMIN+index,
+action:"terminate",
+description:"Application-specific signal (realtime)",
+standard:"posix"};
+
+};
+
+const SIGRTMIN=34;
+const SIGRTMAX=64;exports.SIGRTMAX=SIGRTMAX;
+//# sourceMappingURL=realtime.js.map
+
+/***/ }),
 /* 946 */
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -75658,15 +78593,11 @@ function setup(env) {
 	createDebug.enable = enable;
 	createDebug.enabled = enabled;
 	createDebug.humanize = __webpack_require__(186);
+	createDebug.destroy = destroy;
 
 	Object.keys(env).forEach(key => {
 		createDebug[key] = env[key];
 	});
-
-	/**
-	* Active `debug` instances.
-	*/
-	createDebug.instances = [];
 
 	/**
 	* The currently active debug mode names, and names to skip.
@@ -75709,6 +78640,7 @@ function setup(env) {
 	*/
 	function createDebug(namespace) {
 		let prevTime;
+		let enableOverride = null;
 
 		function debug(...args) {
 			// Disabled?
@@ -75738,7 +78670,7 @@ function setup(env) {
 			args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
 				// If we encounter an escaped % then don't increase the array index
 				if (match === '%%') {
-					return match;
+					return '%';
 				}
 				index++;
 				const formatter = createDebug.formatters[format];
@@ -75761,31 +78693,26 @@ function setup(env) {
 		}
 
 		debug.namespace = namespace;
-		debug.enabled = createDebug.enabled(namespace);
 		debug.useColors = createDebug.useColors();
-		debug.color = selectColor(namespace);
-		debug.destroy = destroy;
+		debug.color = createDebug.selectColor(namespace);
 		debug.extend = extend;
-		// Debug.formatArgs = formatArgs;
-		// debug.rawLog = rawLog;
+		debug.destroy = createDebug.destroy; // XXX Temporary. Will be removed in the next major release.
 
-		// env-specific initialization logic for debug instances
+		Object.defineProperty(debug, 'enabled', {
+			enumerable: true,
+			configurable: false,
+			get: () => enableOverride === null ? createDebug.enabled(namespace) : enableOverride,
+			set: v => {
+				enableOverride = v;
+			}
+		});
+
+		// Env-specific initialization logic for debug instances
 		if (typeof createDebug.init === 'function') {
 			createDebug.init(debug);
 		}
 
-		createDebug.instances.push(debug);
-
 		return debug;
-	}
-
-	function destroy() {
-		const index = createDebug.instances.indexOf(this);
-		if (index !== -1) {
-			createDebug.instances.splice(index, 1);
-			return true;
-		}
-		return false;
 	}
 
 	function extend(namespace, delimiter) {
@@ -75824,11 +78751,6 @@ function setup(env) {
 			} else {
 				createDebug.names.push(new RegExp('^' + namespaces + '$'));
 			}
-		}
-
-		for (i = 0; i < createDebug.instances.length; i++) {
-			const instance = createDebug.instances[i];
-			instance.enabled = createDebug.enabled(instance.namespace);
 		}
 	}
 
@@ -75904,6 +78826,14 @@ function setup(env) {
 		return val;
 	}
 
+	/**
+	* XXX DO NOT USE. This is a temporary stub function.
+	* XXX It WILL be removed in the next major release.
+	*/
+	function destroy() {
+		console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+	}
+
 	createDebug.enable(createDebug.load());
 
 	return createDebug;
@@ -75916,12 +78846,11 @@ module.exports = setup;
 /* 948 */,
 /* 949 */,
 /* 950 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports) {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", { value: true });
-const url = __webpack_require__(835);
 function getProxyUrl(reqUrl) {
     let usingSsl = reqUrl.protocol === 'https:';
     let proxyUrl;
@@ -75936,7 +78865,7 @@ function getProxyUrl(reqUrl) {
         proxyVar = process.env['http_proxy'] || process.env['HTTP_PROXY'];
     }
     if (proxyVar) {
-        proxyUrl = url.parse(proxyVar);
+        proxyUrl = new URL(proxyVar);
     }
     return proxyUrl;
 }
@@ -76137,8 +79066,6 @@ const execa = (file, args, options) => {
 
 	const handlePromiseOnce = onetime(handlePromise);
 
-	crossSpawn._enoent.hookChildProcess(spawned, parsed.parsed);
-
 	handleInput(spawned, parsed.options.input);
 
 	spawned.all = makeAllStream(spawned, parsed.options);
@@ -76224,8 +79151,12 @@ module.exports.node = (scriptPath, args, options = {}) => {
 	}
 
 	const stdio = normalizeStdio.node(options);
+	const defaultExecArgv = process.execArgv.filter(arg => !arg.startsWith('--inspect'));
 
-	const {nodePath = process.execPath, nodeOptions = process.execArgv} = options;
+	const {
+		nodePath = process.execPath,
+		nodeOptions = defaultExecArgv
+	} = options;
 
 	return execa(
 		nodePath,
@@ -76248,61 +79179,7 @@ module.exports.node = (scriptPath, args, options = {}) => {
 
 /***/ }),
 /* 956 */,
-/* 957 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
-
-"use strict";
-
-const path = __webpack_require__(622);
-const locatePath = __webpack_require__(457);
-
-module.exports = (filename, opts) => {
-	opts = opts || {};
-
-	const startDir = path.resolve(opts.cwd || '');
-	const root = path.parse(startDir).root;
-
-	const filenames = [].concat(filename);
-
-	return new Promise(resolve => {
-		(function find(dir) {
-			locatePath(filenames, {cwd: dir}).then(file => {
-				if (file) {
-					resolve(path.join(dir, file));
-				} else if (dir === root) {
-					resolve(null);
-				} else {
-					find(path.dirname(dir));
-				}
-			});
-		})(startDir);
-	});
-};
-
-module.exports.sync = (filename, opts) => {
-	opts = opts || {};
-
-	let dir = path.resolve(opts.cwd || '');
-	const root = path.parse(dir).root;
-
-	const filenames = [].concat(filename);
-
-	// eslint-disable-next-line no-constant-condition
-	while (true) {
-		const file = locatePath.sync(filenames, {cwd: dir});
-
-		if (file) {
-			return path.join(dir, file);
-		} else if (dir === root) {
-			return null;
-		}
-
-		dir = path.dirname(dir);
-	}
-};
-
-
-/***/ }),
+/* 957 */,
 /* 958 */,
 /* 959 */,
 /* 960 */,
@@ -76400,8 +79277,8 @@ module.exports = prerelease
 
 "use strict";
 
-const errorEx = __webpack_require__(612);
-const fallback = __webpack_require__(80);
+const errorEx = __webpack_require__(518);
+const fallback = __webpack_require__(938);
 const {default: LinesAndColumns} = __webpack_require__(228);
 const {codeFrameColumns} = __webpack_require__(801);
 
@@ -76410,7 +79287,7 @@ const JSONError = errorEx('JSONError', {
 	codeFrame: errorEx.append('\n\n%s\n')
 });
 
-module.exports = (string, reviver, filename) => {
+const parseJson = (string, reviver, filename) => {
 	if (typeof reviver === 'string') {
 		filename = reviver;
 		reviver = null;
@@ -76425,7 +79302,7 @@ module.exports = (string, reviver, filename) => {
 		}
 	} catch (error) {
 		error.message = error.message.replace(/\n/g, '');
-		const indexMatch = error.message.match(/in JSON at position (\d+) while parsing near/);
+		const indexMatch = error.message.match(/in JSON at position (\d+) while parsing/);
 
 		const jsonError = new JSONError(error);
 		if (filename) {
@@ -76449,6 +79326,10 @@ module.exports = (string, reviver, filename) => {
 		throw jsonError;
 	}
 };
+
+parseJson.JSONError = JSONError;
+
+module.exports = parseJson;
 
 
 /***/ }),
@@ -76519,6 +79400,9 @@ exports.truncate = function (str, length, chr){
 
 function options(defaults, opts) {
   for (var p in opts) {
+    if (p === '__proto__' || p === 'constructor' || p === 'prototype') {
+        continue;
+    }
     if (opts[p] && opts[p].constructor && opts[p].constructor === Object) {
       defaults[p] = defaults[p] || {};
       options(defaults[p], opts[p]);
@@ -76752,166 +79636,127 @@ module.exports = async;
 /* 980 */,
 /* 981 */,
 /* 982 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
 
 "use strict";
 
-var gitHosts = __webpack_require__(317)
-/* eslint-disable node/no-deprecated-api */
 
-// copy-pasta util._extend from node's source, to avoid pulling
-// the whole util module into peoples' webpack bundles.
-/* istanbul ignore next */
-var extend = Object.assign || function _extend (target, source) {
-  // Don't do anything if source isn't an object
-  if (source === null || typeof source !== 'object') return target
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.Explorer = void 0;
 
-  var keys = Object.keys(source)
-  var i = keys.length
-  while (i--) {
-    target[keys[i]] = source[keys[i]]
+var _path = _interopRequireDefault(__webpack_require__(622));
+
+var _ExplorerBase = __webpack_require__(594);
+
+var _readFile = __webpack_require__(780);
+
+var _cacheWrapper = __webpack_require__(270);
+
+var _getDirectory = __webpack_require__(185);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+class Explorer extends _ExplorerBase.ExplorerBase {
+  constructor(options) {
+    super(options);
   }
-  return target
-}
 
-module.exports = GitHost
-function GitHost (type, user, auth, project, committish, defaultRepresentation, opts) {
-  var gitHostInfo = this
-  gitHostInfo.type = type
-  Object.keys(gitHosts[type]).forEach(function (key) {
-    gitHostInfo[key] = gitHosts[type][key]
-  })
-  gitHostInfo.user = user
-  gitHostInfo.auth = auth
-  gitHostInfo.project = project
-  gitHostInfo.committish = committish
-  gitHostInfo.default = defaultRepresentation
-  gitHostInfo.opts = opts || {}
-}
+  async search(searchFrom = process.cwd()) {
+    const startDirectory = await (0, _getDirectory.getDirectory)(searchFrom);
+    const result = await this.searchFromDirectory(startDirectory);
+    return result;
+  }
 
-GitHost.prototype.hash = function () {
-  return this.committish ? '#' + this.committish : ''
-}
+  async searchFromDirectory(dir) {
+    const absoluteDir = _path.default.resolve(process.cwd(), dir);
 
-GitHost.prototype._fill = function (template, opts) {
-  if (!template) return
-  var vars = extend({}, opts)
-  vars.path = vars.path ? vars.path.replace(/^[/]+/g, '') : ''
-  opts = extend(extend({}, this.opts), opts)
-  var self = this
-  Object.keys(this).forEach(function (key) {
-    if (self[key] != null && vars[key] == null) vars[key] = self[key]
-  })
-  var rawAuth = vars.auth
-  var rawcommittish = vars.committish
-  var rawFragment = vars.fragment
-  var rawPath = vars.path
-  var rawProject = vars.project
-  Object.keys(vars).forEach(function (key) {
-    var value = vars[key]
-    if ((key === 'path' || key === 'project') && typeof value === 'string') {
-      vars[key] = value.split('/').map(function (pathComponent) {
-        return encodeURIComponent(pathComponent)
-      }).join('/')
-    } else {
-      vars[key] = encodeURIComponent(value)
+    const run = async () => {
+      const result = await this.searchDirectory(absoluteDir);
+      const nextDir = this.nextDirectoryToSearch(absoluteDir, result);
+
+      if (nextDir) {
+        return this.searchFromDirectory(nextDir);
+      }
+
+      const transformResult = await this.config.transform(result);
+      return transformResult;
+    };
+
+    if (this.searchCache) {
+      return (0, _cacheWrapper.cacheWrapper)(this.searchCache, absoluteDir, run);
     }
-  })
-  vars['auth@'] = rawAuth ? rawAuth + '@' : ''
-  vars['#fragment'] = rawFragment ? '#' + this.hashformat(rawFragment) : ''
-  vars.fragment = vars.fragment ? vars.fragment : ''
-  vars['#path'] = rawPath ? '#' + this.hashformat(rawPath) : ''
-  vars['/path'] = vars.path ? '/' + vars.path : ''
-  vars.projectPath = rawProject.split('/').map(encodeURIComponent).join('/')
-  if (opts.noCommittish) {
-    vars['#committish'] = ''
-    vars['/tree/committish'] = ''
-    vars['/committish'] = ''
-    vars.committish = ''
-  } else {
-    vars['#committish'] = rawcommittish ? '#' + rawcommittish : ''
-    vars['/tree/committish'] = vars.committish
-      ? '/' + vars.treepath + '/' + vars.committish
-      : ''
-    vars['/committish'] = vars.committish ? '/' + vars.committish : ''
-    vars.committish = vars.committish || 'master'
+
+    return run();
   }
-  var res = template
-  Object.keys(vars).forEach(function (key) {
-    res = res.replace(new RegExp('[{]' + key + '[}]', 'g'), vars[key])
-  })
-  if (opts.noGitPlus) {
-    return res.replace(/^git[+]/, '')
-  } else {
-    return res
+
+  async searchDirectory(dir) {
+    for await (const place of this.config.searchPlaces) {
+      const placeResult = await this.loadSearchPlace(dir, place);
+
+      if (this.shouldSearchStopWithResult(placeResult) === true) {
+        return placeResult;
+      }
+    } // config not found
+
+
+    return null;
   }
-}
 
-GitHost.prototype.ssh = function (opts) {
-  return this._fill(this.sshtemplate, opts)
-}
+  async loadSearchPlace(dir, place) {
+    const filepath = _path.default.join(dir, place);
 
-GitHost.prototype.sshurl = function (opts) {
-  return this._fill(this.sshurltemplate, opts)
-}
+    const fileContents = await (0, _readFile.readFile)(filepath);
+    const result = await this.createCosmiconfigResult(filepath, fileContents);
+    return result;
+  }
 
-GitHost.prototype.browse = function (P, F, opts) {
-  if (typeof P === 'string') {
-    if (typeof F !== 'string') {
-      opts = F
-      F = null
+  async loadFileContent(filepath, content) {
+    if (content === null) {
+      return null;
     }
-    return this._fill(this.browsefiletemplate, extend({
-      fragment: F,
-      path: P
-    }, opts))
-  } else {
-    return this._fill(this.browsetemplate, P)
+
+    if (content.trim() === '') {
+      return undefined;
+    }
+
+    const loader = this.getLoaderEntryForFile(filepath);
+    const loaderResult = await loader(filepath, content);
+    return loaderResult;
   }
+
+  async createCosmiconfigResult(filepath, content) {
+    const fileContent = await this.loadFileContent(filepath, content);
+    const result = this.loadedContentToCosmiconfigResult(filepath, fileContent);
+    return result;
+  }
+
+  async load(filepath) {
+    this.validateFilePath(filepath);
+
+    const absoluteFilePath = _path.default.resolve(process.cwd(), filepath);
+
+    const runLoad = async () => {
+      const fileContents = await (0, _readFile.readFile)(absoluteFilePath, {
+        throwNotFound: true
+      });
+      const result = await this.createCosmiconfigResult(absoluteFilePath, fileContents);
+      const transformResult = await this.config.transform(result);
+      return transformResult;
+    };
+
+    if (this.loadCache) {
+      return (0, _cacheWrapper.cacheWrapper)(this.loadCache, absoluteFilePath, runLoad);
+    }
+
+    return runLoad();
+  }
+
 }
 
-GitHost.prototype.docs = function (opts) {
-  return this._fill(this.docstemplate, opts)
-}
-
-GitHost.prototype.bugs = function (opts) {
-  return this._fill(this.bugstemplate, opts)
-}
-
-GitHost.prototype.https = function (opts) {
-  return this._fill(this.httpstemplate, opts)
-}
-
-GitHost.prototype.git = function (opts) {
-  return this._fill(this.gittemplate, opts)
-}
-
-GitHost.prototype.shortcut = function (opts) {
-  return this._fill(this.shortcuttemplate, opts)
-}
-
-GitHost.prototype.path = function (opts) {
-  return this._fill(this.pathtemplate, opts)
-}
-
-GitHost.prototype.tarball = function (opts_) {
-  var opts = extend({}, opts_, { noCommittish: false })
-  return this._fill(this.tarballtemplate, opts)
-}
-
-GitHost.prototype.file = function (P, opts) {
-  return this._fill(this.filetemplate, extend({ path: P }, opts))
-}
-
-GitHost.prototype.getDefaultRepresentation = function () {
-  return this.default
-}
-
-GitHost.prototype.toString = function (opts) {
-  if (this.default && typeof this[this.default] === 'function') return this[this.default](opts)
-  return this.sshurl(opts)
-}
-
+exports.Explorer = Explorer;
+//# sourceMappingURL=Explorer.js.map
 
 /***/ }),
 /* 983 */,
@@ -76966,308 +79811,7 @@ function ucFirst (string) {
 
 
 /***/ }),
-/* 991 */
-/***/ (function(__unusedmodule, exports, __webpack_require__) {
-
-"use strict";
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-
-
-/*<replacement>*/
-
-var Buffer = __webpack_require__(149).Buffer;
-/*</replacement>*/
-
-var isEncoding = Buffer.isEncoding || function (encoding) {
-  encoding = '' + encoding;
-  switch (encoding && encoding.toLowerCase()) {
-    case 'hex':case 'utf8':case 'utf-8':case 'ascii':case 'binary':case 'base64':case 'ucs2':case 'ucs-2':case 'utf16le':case 'utf-16le':case 'raw':
-      return true;
-    default:
-      return false;
-  }
-};
-
-function _normalizeEncoding(enc) {
-  if (!enc) return 'utf8';
-  var retried;
-  while (true) {
-    switch (enc) {
-      case 'utf8':
-      case 'utf-8':
-        return 'utf8';
-      case 'ucs2':
-      case 'ucs-2':
-      case 'utf16le':
-      case 'utf-16le':
-        return 'utf16le';
-      case 'latin1':
-      case 'binary':
-        return 'latin1';
-      case 'base64':
-      case 'ascii':
-      case 'hex':
-        return enc;
-      default:
-        if (retried) return; // undefined
-        enc = ('' + enc).toLowerCase();
-        retried = true;
-    }
-  }
-};
-
-// Do not cache `Buffer.isEncoding` when checking encoding names as some
-// modules monkey-patch it to support additional encodings
-function normalizeEncoding(enc) {
-  var nenc = _normalizeEncoding(enc);
-  if (typeof nenc !== 'string' && (Buffer.isEncoding === isEncoding || !isEncoding(enc))) throw new Error('Unknown encoding: ' + enc);
-  return nenc || enc;
-}
-
-// StringDecoder provides an interface for efficiently splitting a series of
-// buffers into a series of JS strings without breaking apart multi-byte
-// characters.
-exports.StringDecoder = StringDecoder;
-function StringDecoder(encoding) {
-  this.encoding = normalizeEncoding(encoding);
-  var nb;
-  switch (this.encoding) {
-    case 'utf16le':
-      this.text = utf16Text;
-      this.end = utf16End;
-      nb = 4;
-      break;
-    case 'utf8':
-      this.fillLast = utf8FillLast;
-      nb = 4;
-      break;
-    case 'base64':
-      this.text = base64Text;
-      this.end = base64End;
-      nb = 3;
-      break;
-    default:
-      this.write = simpleWrite;
-      this.end = simpleEnd;
-      return;
-  }
-  this.lastNeed = 0;
-  this.lastTotal = 0;
-  this.lastChar = Buffer.allocUnsafe(nb);
-}
-
-StringDecoder.prototype.write = function (buf) {
-  if (buf.length === 0) return '';
-  var r;
-  var i;
-  if (this.lastNeed) {
-    r = this.fillLast(buf);
-    if (r === undefined) return '';
-    i = this.lastNeed;
-    this.lastNeed = 0;
-  } else {
-    i = 0;
-  }
-  if (i < buf.length) return r ? r + this.text(buf, i) : this.text(buf, i);
-  return r || '';
-};
-
-StringDecoder.prototype.end = utf8End;
-
-// Returns only complete characters in a Buffer
-StringDecoder.prototype.text = utf8Text;
-
-// Attempts to complete a partial non-UTF-8 character using bytes from a Buffer
-StringDecoder.prototype.fillLast = function (buf) {
-  if (this.lastNeed <= buf.length) {
-    buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, this.lastNeed);
-    return this.lastChar.toString(this.encoding, 0, this.lastTotal);
-  }
-  buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, buf.length);
-  this.lastNeed -= buf.length;
-};
-
-// Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
-// continuation byte. If an invalid byte is detected, -2 is returned.
-function utf8CheckByte(byte) {
-  if (byte <= 0x7F) return 0;else if (byte >> 5 === 0x06) return 2;else if (byte >> 4 === 0x0E) return 3;else if (byte >> 3 === 0x1E) return 4;
-  return byte >> 6 === 0x02 ? -1 : -2;
-}
-
-// Checks at most 3 bytes at the end of a Buffer in order to detect an
-// incomplete multi-byte UTF-8 character. The total number of bytes (2, 3, or 4)
-// needed to complete the UTF-8 character (if applicable) are returned.
-function utf8CheckIncomplete(self, buf, i) {
-  var j = buf.length - 1;
-  if (j < i) return 0;
-  var nb = utf8CheckByte(buf[j]);
-  if (nb >= 0) {
-    if (nb > 0) self.lastNeed = nb - 1;
-    return nb;
-  }
-  if (--j < i || nb === -2) return 0;
-  nb = utf8CheckByte(buf[j]);
-  if (nb >= 0) {
-    if (nb > 0) self.lastNeed = nb - 2;
-    return nb;
-  }
-  if (--j < i || nb === -2) return 0;
-  nb = utf8CheckByte(buf[j]);
-  if (nb >= 0) {
-    if (nb > 0) {
-      if (nb === 2) nb = 0;else self.lastNeed = nb - 3;
-    }
-    return nb;
-  }
-  return 0;
-}
-
-// Validates as many continuation bytes for a multi-byte UTF-8 character as
-// needed or are available. If we see a non-continuation byte where we expect
-// one, we "replace" the validated continuation bytes we've seen so far with
-// a single UTF-8 replacement character ('\ufffd'), to match v8's UTF-8 decoding
-// behavior. The continuation byte check is included three times in the case
-// where all of the continuation bytes for a character exist in the same buffer.
-// It is also done this way as a slight performance increase instead of using a
-// loop.
-function utf8CheckExtraBytes(self, buf, p) {
-  if ((buf[0] & 0xC0) !== 0x80) {
-    self.lastNeed = 0;
-    return '\ufffd';
-  }
-  if (self.lastNeed > 1 && buf.length > 1) {
-    if ((buf[1] & 0xC0) !== 0x80) {
-      self.lastNeed = 1;
-      return '\ufffd';
-    }
-    if (self.lastNeed > 2 && buf.length > 2) {
-      if ((buf[2] & 0xC0) !== 0x80) {
-        self.lastNeed = 2;
-        return '\ufffd';
-      }
-    }
-  }
-}
-
-// Attempts to complete a multi-byte UTF-8 character using bytes from a Buffer.
-function utf8FillLast(buf) {
-  var p = this.lastTotal - this.lastNeed;
-  var r = utf8CheckExtraBytes(this, buf, p);
-  if (r !== undefined) return r;
-  if (this.lastNeed <= buf.length) {
-    buf.copy(this.lastChar, p, 0, this.lastNeed);
-    return this.lastChar.toString(this.encoding, 0, this.lastTotal);
-  }
-  buf.copy(this.lastChar, p, 0, buf.length);
-  this.lastNeed -= buf.length;
-}
-
-// Returns all complete UTF-8 characters in a Buffer. If the Buffer ended on a
-// partial character, the character's bytes are buffered until the required
-// number of bytes are available.
-function utf8Text(buf, i) {
-  var total = utf8CheckIncomplete(this, buf, i);
-  if (!this.lastNeed) return buf.toString('utf8', i);
-  this.lastTotal = total;
-  var end = buf.length - (total - this.lastNeed);
-  buf.copy(this.lastChar, 0, end);
-  return buf.toString('utf8', i, end);
-}
-
-// For UTF-8, a replacement character is added when ending on a partial
-// character.
-function utf8End(buf) {
-  var r = buf && buf.length ? this.write(buf) : '';
-  if (this.lastNeed) return r + '\ufffd';
-  return r;
-}
-
-// UTF-16LE typically needs two bytes per character, but even if we have an even
-// number of bytes available, we need to check if we end on a leading/high
-// surrogate. In that case, we need to wait for the next two bytes in order to
-// decode the last character properly.
-function utf16Text(buf, i) {
-  if ((buf.length - i) % 2 === 0) {
-    var r = buf.toString('utf16le', i);
-    if (r) {
-      var c = r.charCodeAt(r.length - 1);
-      if (c >= 0xD800 && c <= 0xDBFF) {
-        this.lastNeed = 2;
-        this.lastTotal = 4;
-        this.lastChar[0] = buf[buf.length - 2];
-        this.lastChar[1] = buf[buf.length - 1];
-        return r.slice(0, -1);
-      }
-    }
-    return r;
-  }
-  this.lastNeed = 1;
-  this.lastTotal = 2;
-  this.lastChar[0] = buf[buf.length - 1];
-  return buf.toString('utf16le', i, buf.length - 1);
-}
-
-// For UTF-16LE we do not explicitly append special replacement characters if we
-// end on a partial character, we simply let v8 handle that.
-function utf16End(buf) {
-  var r = buf && buf.length ? this.write(buf) : '';
-  if (this.lastNeed) {
-    var end = this.lastTotal - this.lastNeed;
-    return r + this.lastChar.toString('utf16le', 0, end);
-  }
-  return r;
-}
-
-function base64Text(buf, i) {
-  var n = (buf.length - i) % 3;
-  if (n === 0) return buf.toString('base64', i);
-  this.lastNeed = 3 - n;
-  this.lastTotal = 3;
-  if (n === 1) {
-    this.lastChar[0] = buf[buf.length - 1];
-  } else {
-    this.lastChar[0] = buf[buf.length - 2];
-    this.lastChar[1] = buf[buf.length - 1];
-  }
-  return buf.toString('base64', i, buf.length - n);
-}
-
-function base64End(buf) {
-  var r = buf && buf.length ? this.write(buf) : '';
-  if (this.lastNeed) return r + this.lastChar.toString('base64', 0, 3 - this.lastNeed);
-  return r;
-}
-
-// Pass bytes on through for single-byte encodings (e.g. ascii, latin1, hex)
-function simpleWrite(buf) {
-  return buf.toString(this.encoding);
-}
-
-function simpleEnd(buf) {
-  return buf && buf.length ? this.write(buf) : '';
-}
-
-/***/ }),
+/* 991 */,
 /* 992 */,
 /* 993 */,
 /* 994 */
@@ -77357,163 +79901,61 @@ module.exports = function highlight(code, opts) {
 /* 997 */,
 /* 998 */,
 /* 999 */
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(module) {
 
-const Range = __webpack_require__(124)
-const { ANY } = __webpack_require__(174)
-const satisfies = __webpack_require__(310)
-const compare = __webpack_require__(874)
+"use strict";
 
-// Complex range `r1 || r2 || ...` is a subset of `R1 || R2 || ...` iff:
-// - Every simple range `r1, r2, ...` is a subset of some `R1, R2, ...`
-//
-// Simple range `c1 c2 ...` is a subset of simple range `C1 C2 ...` iff:
-// - If c is only the ANY comparator
-//   - If C is only the ANY comparator, return true
-//   - Else return false
-// - Let EQ be the set of = comparators in c
-// - If EQ is more than one, return true (null set)
-// - Let GT be the highest > or >= comparator in c
-// - Let LT be the lowest < or <= comparator in c
-// - If GT and LT, and GT.semver > LT.semver, return true (null set)
-// - If EQ
-//   - If GT, and EQ does not satisfy GT, return true (null set)
-//   - If LT, and EQ does not satisfy LT, return true (null set)
-//   - If EQ satisfies every C, return true
-//   - Else return false
-// - If GT
-//   - If GT is lower than any > or >= comp in C, return false
-//   - If GT is >=, and GT.semver does not satisfy every C, return false
-// - If LT
-//   - If LT.semver is greater than that of any > comp in C, return false
-//   - If LT is <=, and LT.semver does not satisfy every C, return false
-// - If any C is a = range, and GT or LT are set, return false
-// - Else return true
+const aliases = ['stdin', 'stdout', 'stderr'];
 
-const subset = (sub, dom, options) => {
-  sub = new Range(sub, options)
-  dom = new Range(dom, options)
-  let sawNonNull = false
+const hasAlias = opts => aliases.some(alias => opts[alias] !== undefined);
 
-  OUTER: for (const simpleSub of sub.set) {
-    for (const simpleDom of dom.set) {
-      const isSub = simpleSubset(simpleSub, simpleDom, options)
-      sawNonNull = sawNonNull || isSub !== null
-      if (isSub)
-        continue OUTER
-    }
-    // the null set is a subset of everything, but null simple ranges in
-    // a complex range should be ignored.  so if we saw a non-null range,
-    // then we know this isn't a subset, but if EVERY simple range was null,
-    // then it is a subset.
-    if (sawNonNull)
-      return false
-  }
-  return true
-}
+const normalizeStdio = opts => {
+	if (!opts) {
+		return;
+	}
 
-const simpleSubset = (sub, dom, options) => {
-  if (sub.length === 1 && sub[0].semver === ANY)
-    return dom.length === 1 && dom[0].semver === ANY
+	const {stdio} = opts;
 
-  const eqSet = new Set()
-  let gt, lt
-  for (const c of sub) {
-    if (c.operator === '>' || c.operator === '>=')
-      gt = higherGT(gt, c, options)
-    else if (c.operator === '<' || c.operator === '<=')
-      lt = lowerLT(lt, c, options)
-    else
-      eqSet.add(c.semver)
-  }
+	if (stdio === undefined) {
+		return aliases.map(alias => opts[alias]);
+	}
 
-  if (eqSet.size > 1)
-    return null
+	if (hasAlias(opts)) {
+		throw new Error(`It's not possible to provide \`stdio\` in combination with one of ${aliases.map(alias => `\`${alias}\``).join(', ')}`);
+	}
 
-  let gtltComp
-  if (gt && lt) {
-    gtltComp = compare(gt.semver, lt.semver, options)
-    if (gtltComp > 0)
-      return null
-    else if (gtltComp === 0 && (gt.operator !== '>=' || lt.operator !== '<='))
-      return null
-  }
+	if (typeof stdio === 'string') {
+		return stdio;
+	}
 
-  // will iterate one or zero times
-  for (const eq of eqSet) {
-    if (gt && !satisfies(eq, String(gt), options))
-      return null
+	if (!Array.isArray(stdio)) {
+		throw new TypeError(`Expected \`stdio\` to be of type \`string\` or \`Array\`, got \`${typeof stdio}\``);
+	}
 
-    if (lt && !satisfies(eq, String(lt), options))
-      return null
+	const length = Math.max(stdio.length, aliases.length);
+	return Array.from({length}, (value, index) => stdio[index]);
+};
 
-    for (const c of dom) {
-      if (!satisfies(eq, String(c), options))
-        return false
-    }
-    return true
-  }
+module.exports = normalizeStdio;
 
-  let higher, lower
-  let hasDomLT, hasDomGT
-  for (const c of dom) {
-    hasDomGT = hasDomGT || c.operator === '>' || c.operator === '>='
-    hasDomLT = hasDomLT || c.operator === '<' || c.operator === '<='
-    if (gt) {
-      if (c.operator === '>' || c.operator === '>=') {
-        higher = higherGT(gt, c, options)
-        if (higher === c)
-          return false
-      } else if (gt.operator === '>=' && !satisfies(gt.semver, String(c), options))
-        return false
-    }
-    if (lt) {
-      if (c.operator === '<' || c.operator === '<=') {
-        lower = lowerLT(lt, c, options)
-        if (lower === c)
-          return false
-      } else if (lt.operator === '<=' && !satisfies(lt.semver, String(c), options))
-        return false
-    }
-    if (!c.operator && (lt || gt) && gtltComp !== 0)
-      return false
-  }
+// `ipc` is pushed unless it is already present
+module.exports.node = opts => {
+	const stdio = normalizeStdio(opts);
 
-  // if there was a < or >, and nothing in the dom, then must be false
-  // UNLESS it was limited by another range in the other direction.
-  // Eg, >1.0.0 <1.0.1 is still a subset of <2.0.0
-  if (gt && hasDomLT && !lt && gtltComp !== 0)
-    return false
+	if (stdio === 'ipc') {
+		return 'ipc';
+	}
 
-  if (lt && hasDomGT && !gt && gtltComp !== 0)
-    return false
+	if (stdio === undefined || typeof stdio === 'string') {
+		return [stdio, stdio, stdio, 'ipc'];
+	}
 
-  return true
-}
+	if (stdio.includes('ipc')) {
+		return stdio;
+	}
 
-// >=1.2.3 is lower than >1.2.3
-const higherGT = (a, b, options) => {
-  if (!a)
-    return b
-  const comp = compare(a.semver, b.semver, options)
-  return comp > 0 ? a
-    : comp < 0 ? b
-    : b.operator === '>' && a.operator === '>=' ? b
-    : a
-}
-
-// <=1.2.3 is higher than <1.2.3
-const lowerLT = (a, b, options) => {
-  if (!a)
-    return b
-  const comp = compare(a.semver, b.semver, options)
-  return comp < 0 ? a
-    : comp > 0 ? b
-    : b.operator === '<' && a.operator === '<=' ? b
-    : a
-}
-
-module.exports = subset
+	return [...stdio, 'ipc'];
+};
 
 
 /***/ })

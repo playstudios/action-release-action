@@ -1,3 +1,16 @@
+## [1.2.0](https://github.com/playstudios/action-release-action/compare/v1.1.0...v1.2.0) (2021-04-15)
+
+
+### Features
+
+* dep bump creates a patch release ([2679643](https://github.com/playstudios/action-release-action/commit/2679643b309056aca34e8a3e1d4e96390a66fcf5))
+* use semantic-release-bot as git user ([0823173](https://github.com/playstudios/action-release-action/commit/0823173b2371545209644c6ffd67dc91cb248ed0))
+
+
+### Bug Fixes
+
+* git merge git user ([a3c68f2](https://github.com/playstudios/action-release-action/commit/a3c68f20fa42ac2545bb5041e05096cd690df250))
+
 ## [1.1.0](https://github.com/playstudios/action-release-action/compare/v1.0.0...v1.1.0) (2020-09-07)
 
 
