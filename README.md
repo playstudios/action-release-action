@@ -3,7 +3,9 @@
 Release GitHub action with [semantic-release](https://github.com/semantic-release/semantic-release).
 
 All assets built in the `dist` dir for branch `<branch>` are released in the branch `release/<branch>`.
-Git tags are also automatically created with semver for the `master` branch.
+Git tags `vx.x.x` and `vx` are also created for the default branch.
+
+Preset used is `conventional-changelog-conventionalcommits`.
 
 ```yaml
 name: Release

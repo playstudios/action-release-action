@@ -2,6 +2,7 @@ const core = require('@actions/core')
 const github = require('@actions/github')
 const execa = require('execa')
 const semanticRelease = require('semantic-release')
+const { COMMIT_NAME, COMMIT_EMAIL } = require('semantic-release/lib/definitions/constants')
 
 const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
@@ -47,9 +48,6 @@ const clean = async () => {
 const release = async () => {
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
 
-  await shell('git config user.name psa-builder')
-  await shell('git config user.email admin-group@playstudios.asia')
-
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
@@ -57,19 +55,11 @@ const release = async () => {
     await shell('git checkout stash^3 .')
     const options = {
       branches: [branch],
+      releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
+      preset: 'conventionalcommits',
       plugins: [
-        [
-          '@semantic-release/commit-analyzer',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
-        [
-          '@semantic-release/release-notes-generator',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
+        '@semantic-release/commit-analyzer',
+        '@semantic-release/release-notes-generator',
         '@semantic-release/github',
         '@semantic-release/changelog',
         [
@@ -82,7 +72,7 @@ const release = async () => {
     }
     const modules = [
       'semantic-release',
-      'conventional-changelog-conventionalcommits',
+      `conventional-changelog-${options.preset}`,
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
     await shell(`npm i ${modules.join(' ')}`)
@@ -98,7 +88,9 @@ const release = async () => {
     }
   } else {
     await shell('git add -A')
-    await shell("git commit -m 'chore(release): generate dist files'")
+    await shell(
+      `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+    )
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }
