@@ -55,19 +55,10 @@ const release = async () => {
     await shell('git checkout stash^3 .')
     const options = {
       branches: [branch],
+      preset: 'conventionalcommits',
       plugins: [
-        [
-          '@semantic-release/commit-analyzer',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
-        [
-          '@semantic-release/release-notes-generator',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
+        '@semantic-release/commit-analyzer',
+        '@semantic-release/release-notes-generator',
         '@semantic-release/github',
         '@semantic-release/changelog',
         [
@@ -80,7 +71,7 @@ const release = async () => {
     }
     const modules = [
       'semantic-release',
-      'conventional-changelog-conventionalcommits',
+      `conventional-changelog-${options.preset}`,
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
     await shell(`npm i ${modules.join(' ')}`)
