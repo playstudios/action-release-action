@@ -55,6 +55,7 @@ const release = async () => {
     await shell('git checkout stash^3 .')
     const options = {
       branches: [branch],
+      releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
       preset: 'conventionalcommits',
       plugins: [
         '@semantic-release/commit-analyzer',
