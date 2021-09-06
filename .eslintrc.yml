@@ -11,6 +11,7 @@ env:
 rules:
   camelcase: off
   github/no-then: off
+  import/no-commonjs: off
 overrides:
   - files: '**/*.test.js'
     plugins:
