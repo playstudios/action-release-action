@@ -81050,11 +81050,11 @@ const clean = async () => {
 
   const branch = `release/${github.context.payload.ref}`
   const octokit = github.getOctokit(core.getInput('github-token'))
-  const ref = await octokit.git.getRef({ ...github.context.repo, ref: `heads/${branch}` }).catch((e) => e)
+  const ref = await octokit.rest.git.getRef({ ...github.context.repo, ref: `heads/${branch}` }).catch((e) => e)
 
   if (ref.data) {
     core.info(`deleting release branch ${ref.data.ref}`)
-    await octokit.git.deleteRef({ ...github.context.repo, ref: `heads/${branch}` })
+    await octokit.rest.git.deleteRef({ ...github.context.repo, ref: `heads/${branch}` })
   } else if (ref.status === '404') {
     core.info('release branch of deleted branch not found')
   } else {

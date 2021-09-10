@@ -1,3 +1,10 @@
+### [1.2.3](https://github.com/playstudios/action-release-action/compare/v1.2.2...v1.2.3) (2021-09-10)
+
+
+### Bug Fixes
+
+* octokit rest regression ([f0e9a28](https://github.com/playstudios/action-release-action/commit/f0e9a2812c5121f302bdf8f02864583841159202))
+
 ### [1.2.2](https://github.com/playstudios/action-release-action/compare/v1.2.1...v1.2.2) (2021-09-06)
 
 ### [1.2.1](https://github.com/playstudios/action-release-action/compare/v1.2.0...v1.2.1) (2021-09-06)
