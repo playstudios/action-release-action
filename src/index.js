@@ -46,6 +46,7 @@ const clean = async () => {
 }
 
 const release = async () => {
+  core.info(`Current ref is ${github.context.ref}`)
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
 
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
