@@ -47,7 +47,7 @@ const clean = async () => {
 
 const release = async () => {
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
-  core.info(`Current ref is ${github.context.ref}`)
+  core.info(`current ref is ${branch}`)
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
