@@ -1,3 +1,10 @@
+## [1.3.0](https://github.com/playstudios/action-release-action/compare/v1.2.3...v1.3.0) (2021-11-11)
+
+
+### Features
+
+* allow creating tags / releases within non-js repos ([#8](https://github.com/playstudios/action-release-action/issues/8)) ([d5abc2c](https://github.com/playstudios/action-release-action/commit/d5abc2cb44b6bba9d9e89475e50c4ca31be275d0))
+
 ### [1.2.3](https://github.com/playstudios/action-release-action/compare/v1.2.2...v1.2.3) (2021-09-10)
 
 
