@@ -88,9 +88,13 @@ const release = async () => {
     }
   } else {
     await shell('git add -A')
-    await shell(
-      `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
-    )
+    try {
+      await shell(
+        `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+      )
+    } catch (e) {
+      core.warning(`tried to commit, couldn't. ${e}`)
+    }
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }
