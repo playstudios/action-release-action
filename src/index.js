@@ -75,7 +75,11 @@ const release = async () => {
       `conventional-changelog-${options.preset}`,
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
-    await shell(`npm i ${modules.join(' ')}`)
+    try {
+      await shell(`npm i ${modules.join(' ')}`)
+    } catch (e) {
+      core.warning(`attempted to install npm modules but failed, is this a js action?\n\n${e}`)
+    }
     const result = await semanticRelease(options, {
       env: {
         ...process.env,
@@ -88,9 +92,11 @@ const release = async () => {
     }
   } else {
     await shell('git add -A')
-    await shell(
-      `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
-    )
+    try {
+      await shell("git commit -m 'chore(release): generate dist files'")
+    } catch (e) {
+      core.warning(`i've tried to commit something but it didn't work, is there actually anything to commit?`)
+    }
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }
