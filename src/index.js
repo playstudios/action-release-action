@@ -52,7 +52,9 @@ const release = async () => {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
     await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
-    await shell('git checkout stash^3 .')
+    if ((await shell(`git stash list |wc -l`)) > 0) {
+      await shell('git checkout stash^3 .')
+    }
     const options = {
       branches: [branch],
       releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
