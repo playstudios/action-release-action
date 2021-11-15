@@ -52,8 +52,10 @@ const release = async () => {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
     await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
-    if ((await shell(`git stash list |wc -l`)) > 0) {
+    try {
       await shell('git checkout stash^3 .')
+    } catch (err) {
+      core.warning(`couldnt checkout anything, exiting\n\n${err}`)
     }
     const options = {
       branches: [branch],
