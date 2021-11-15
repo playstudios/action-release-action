@@ -67,7 +67,7 @@ const release = async () => {
         [
           '@semantic-release/git',
           {
-            assets: ['*/dist/**', 'CHANGELOG.md'],
+            assets: ['dist/**', 'CHANGELOG.md'],
           },
         ],
       ],
