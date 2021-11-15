@@ -81069,7 +81069,11 @@ const release = async () => {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
     await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
-    await shell('git checkout stash^3 .')
+    try {
+      await shell('git checkout stash^3 .')
+    } catch (err) {
+      core.warning(`couldnt checkout anything, exiting\n\n${err}`)
+    }
     const options = {
       branches: [branch],
       releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
@@ -81082,7 +81086,7 @@ const release = async () => {
         [
           '@semantic-release/git',
           {
-            assets: ['*/dist/**', 'CHANGELOG.md'],
+            assets: ['dist/**', 'CHANGELOG.md'],
           },
         ],
       ],
@@ -81092,7 +81096,11 @@ const release = async () => {
       `conventional-changelog-${options.preset}`,
       ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
-    await shell(`npm i ${modules.join(' ')}`)
+    try {
+      await shell(`npm i ${modules.join(' ')}`)
+    } catch (e) {
+      core.warning(`attempted to install npm modules but failed, is this a js action?\n\n${e}`)
+    }
     const result = await semanticRelease(options, {
       env: {
         ...process.env,
@@ -81105,9 +81113,13 @@ const release = async () => {
     }
   } else {
     await shell('git add -A')
-    await shell(
-      `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
-    )
+    try {
+      await shell(
+        `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+      )
+    } catch (e) {
+      core.warning(`i've tried to commit something but it didn't work, is there actually anything to commit?\n\n ${e}`)
+    }
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }

@@ -1,3 +1,11 @@
+### [1.3.2](https://github.com/playstudios/action-release-action/compare/v1.3.1...v1.3.2) (2021-11-15)
+
+
+### Bug Fixes
+
+* get rid of redundant if-else block ([c749e26](https://github.com/playstudios/action-release-action/commit/c749e26b6a6f6cddfcfcf3da4362c9bc0899692f))
+* try-catch the checlout stash ([0defc71](https://github.com/playstudios/action-release-action/commit/0defc714a166479b61b12777efc83de92592a779))
+
 ### [1.3.1](https://github.com/playstudios/action-release-action/compare/v1.3.0...v1.3.1) (2021-11-15)
 
 
