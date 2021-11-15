@@ -1,3 +1,10 @@
+### [1.3.1](https://github.com/playstudios/action-release-action/compare/v1.3.0...v1.3.1) (2021-11-15)
+
+
+### Bug Fixes
+
+* dist file not commited ([a778f72](https://github.com/playstudios/action-release-action/commit/a778f7227153ed597d62fe749997673fa943ba57))
+
 ## [1.3.0](https://github.com/playstudios/action-release-action/compare/v1.2.3...v1.3.0) (2021-11-11)
 
 
