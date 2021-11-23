@@ -61,7 +61,7 @@ const release = async () => {
       branches: [branch],
       releaseRules: [{ type: 'build', scope: 'deps', release: 'patch' }],
       preset: 'conventionalcommits',
-      tagFormat: core.getInput('tag-format') || 'v${version}',
+      tagFormat: '${version}',
       plugins: [
         '@semantic-release/commit-analyzer',
         '@semantic-release/release-notes-generator',
