@@ -9,6 +9,13 @@ Preset used is `conventional-changelog-conventionalcommits`.
 
 ## tag version format
 
+> Warning! Do no mix'n'match tag formats within a single repo!
+>
+> If the latest release in a repo is `3.2.0` and you change the format to prefix the numbers with a `v` then the next release will be `v1.0.0`.
+> i.e. There will be a parallel release channel... maybe this is what you want?
+>
+> More information can be found [here](https://github.com/semantic-release/semantic-release/blob/master/docs/usage/configuration.md#existing-version-tags)
+
 An optional `tag-format` input can be provided to control the format of the tag created.
 
 More information can be found [here](https://github.com/semantic-release/semantic-release/blob/master/docs/usage/configuration.md#tagformat)
@@ -31,7 +38,7 @@ The following example will create a release in the format `mysuperrelease-X.Y.Z`
 
 If `tag-format` is not included, the release format is `vX.Y.Z`
 
-## Full example
+## Full example using default tag format
 
 ```yaml
 name: Release
