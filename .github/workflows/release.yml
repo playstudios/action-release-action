@@ -14,7 +14,7 @@ jobs:
       - name: Build
         run: |
           echo ::group::install deps
-          npm ci
+          npm install --legacy-peer-deps #because of a NPM bug
           echo ::group::lint
           npm run lint
           echo ::group::test
