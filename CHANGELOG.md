@@ -1,3 +1,5 @@
+## [1.5.1](https://github.com/playstudios/action-release-action/compare/v1.5.0...v1.5.1) (2022-08-17)
+
 ## [1.4.0](https://github.com/playstudios/action-release-action/compare/v1.3.2...v1.4.0) (2021-11-23)
 
 
