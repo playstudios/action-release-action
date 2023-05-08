@@ -9,5 +9,5 @@ inputs:
     description: Clean up obsolete release branches
     required: false
 runs:
-  using: node18
+  using: node16
   main: dist/index.js
