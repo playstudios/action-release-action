@@ -4,7 +4,7 @@ plugins:
 extends:
   - plugin:github/recommended
 parserOptions:
-  ecmaVersion: 2019
+  ecmaVersion: 2020
 env:
   node: true
   es2017: true
