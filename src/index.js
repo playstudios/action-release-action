@@ -1,9 +1,15 @@
-import core from '@actions/core'
-import { execaCommand } from 'execa'
-import github from '@actions/github'
-import semanticRelease from 'semantic-release'
+// import core from '@actions/core'
+// import { execaCommand } from 'execa'
+// import github from '@actions/github'
+// import semanticRelease from 'semantic-release'
+const core = require('@actions/core')
+const github = require('@actions/github')
+const execa = require('execa')
+const semanticRelease = require('semantic-release')
+//const { COMMIT_NAME, COMMIT_EMAIL } = require('semantic-release/lib/definitions/constants')
 
-const shell = async (command) => execaCommand(command, { shell: true, stdio: 'inherit' })
+//const shell = async (command) => execaCommand(command, { shell: true, stdio: 'inherit' })
+const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
 const run = async () => {
   try {
