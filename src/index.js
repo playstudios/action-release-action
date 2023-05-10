@@ -1,7 +1,6 @@
+import { execaCommand } from 'execa'
 const core = require('@actions/core')
 const github = require('@actions/github')
-//const execa = require('execa')
-import {execaCommand} from 'execa'
 const semanticRelease = require('semantic-release')
 const { COMMIT_NAME, COMMIT_EMAIL } = require('semantic-release/lib/definitions/constants')
 
