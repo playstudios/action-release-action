@@ -1,3 +1,24 @@
+## [1.6.0](https://github.com/playstudios/action-release-action/compare/v1.5.1...v1.6.0) (2023-05-10)
+
+
+### Features
+
+* changed to Node16 and upgraded versions of semantic release ([6816095](https://github.com/playstudios/action-release-action/commit/6816095578ba13aa13b88c3acd94d5fccca3d3d8))
+* changed to Node18 and upgraded to latest versions: ([db5d5d2](https://github.com/playstudios/action-release-action/commit/db5d5d25dc27ebc27efc5e3fbf2c0b294974b69d))
+* log current branch ([9493546](https://github.com/playstudios/action-release-action/commit/9493546a14598d6fc0e77427d26e9c9bd79ea310))
+* reverted ESM ([422ef88](https://github.com/playstudios/action-release-action/commit/422ef88be7ec917eff75b45db40f84e81a61f02d))
+* Upgrade to node16 and fixed dependencies ([07a3355](https://github.com/playstudios/action-release-action/commit/07a3355acadd37b2d2167184a523300b8ad59f9e))
+* Upgrade to node16 and fixed dependencies ([8434091](https://github.com/playstudios/action-release-action/commit/84340917b2a329e93a3d5bb8aac915e66a991f0b))
+
+
+### Bug Fixes
+
+* added missing plugin ([309bca7](https://github.com/playstudios/action-release-action/commit/309bca7382ec8bc5edcb45bfd62d11d7d962ebcc))
+* made it fully ES compliant and added missing plugin ([bca5b5d](https://github.com/playstudios/action-release-action/commit/bca5b5dfe6b6ebe304828b3271e080e825d37d58))
+* Set the semantic release changelog and generator versions ([2efaa1e](https://github.com/playstudios/action-release-action/commit/2efaa1eec3010a953bbd4bf3a16e6dd24eaecee6))
+* Set the semantic release changelog version ([583cb3d](https://github.com/playstudios/action-release-action/commit/583cb3d61cb455b1b168caf1125b5d3ef03d7c26))
+* Set the semantic release release generator version ([ae408f7](https://github.com/playstudios/action-release-action/commit/ae408f72b68369fb7d77a4d8394997725124e8ac))
+
 ## [1.5.1](https://github.com/playstudios/action-release-action/compare/v1.5.0...v1.5.1) (2022-08-17)
 
 ## [1.4.0](https://github.com/playstudios/action-release-action/compare/v1.3.2...v1.4.0) (2021-11-23)
