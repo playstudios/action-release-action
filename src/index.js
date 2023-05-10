@@ -1,9 +1,14 @@
+// import core from '@actions/core'
+// import { execaCommand } from 'execa'
+// import github from '@actions/github'
+// import semanticRelease from 'semantic-release'
 const core = require('@actions/core')
 const github = require('@actions/github')
 const execa = require('execa')
 const semanticRelease = require('semantic-release')
-const { COMMIT_NAME, COMMIT_EMAIL } = require('semantic-release/lib/definitions/constants')
+//const { COMMIT_NAME, COMMIT_EMAIL } = require('semantic-release/lib/definitions/constants')
 
+//const shell = async (command) => execaCommand(command, { shell: true, stdio: 'inherit' })
 const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
 const run = async () => {
@@ -47,11 +52,14 @@ const clean = async () => {
 
 const release = async () => {
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
+  core.info(`current ref is ${branch}`)
 
   if (['refs/heads/master', 'refs/heads/main'].includes(github.context.ref)) {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
-    await shell(`git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' merge -`)
+    await shell(
+      `git -c user.name='${semanticRelease.COMMIT_NAME}' -c user.email='${semanticRelease.COMMIT_EMAIL}' merge -`,
+    )
     try {
       await shell('git checkout stash^3 .')
     } catch (err) {
@@ -99,7 +107,7 @@ const release = async () => {
     await shell('git add -A')
     try {
       await shell(
-        `git -c user.name='${COMMIT_NAME}' -c user.email='${COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+        `git -c user.name='${semanticRelease.COMMIT_NAME}' -c user.email='${semanticRelease.COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
       )
     } catch (e) {
       core.warning(`i've tried to commit something but it didn't work, is there actually anything to commit?\n\n ${e}`)
