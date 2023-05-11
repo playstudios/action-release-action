@@ -16,8 +16,6 @@
     "@semantic-release/release-notes-generator": "^10.0.3"
   },
   "devDependencies": {
-    "@types/jest": "^27.0.1",
-    "@types/node": "^16.7.10",
     "eslint": "^7.32.0",
     "eslint-plugin-github": "^4.2.0",
     "eslint-plugin-jest": "^24.4.0",
