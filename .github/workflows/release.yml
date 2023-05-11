@@ -19,8 +19,6 @@ jobs:
           npm run lint
           echo ::group::test
           npm test
-          echo ::group::pack
-          npm run pack
       - uses: ./
         with:
           github-token: ${{ github.token }}

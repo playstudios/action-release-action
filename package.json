@@ -1,5 +1,5 @@
 {
-  "main": "src",
+  "main": "index.js",
   "scripts": {
     "lint": "eslint src",
     "test": "jest --passWithNoTests",
@@ -10,13 +10,13 @@
     "@actions/github": "^5.1.1",    
     "@vercel/ncc": "^0.36.1",
     "execa": "^5.1.1",
+    "util":"0.12.5",
+    "typescript": "5.0.4",
     "semantic-release": "^19.0.5",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/release-notes-generator": "^10.0.3"
   },
   "devDependencies": {
-    "@types/jest": "^27.0.1",
-    "@types/node": "^16.7.10",
     "eslint": "^7.32.0",
     "eslint-plugin-github": "^4.2.0",
     "eslint-plugin-jest": "^24.4.0",
