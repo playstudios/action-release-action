@@ -1,4 +1,4 @@
-const exec = require('./src/_exec')
+const exec = require('./src/exec')
 const path = require('path')
 
 const run = async () => {
