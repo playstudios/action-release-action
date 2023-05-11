@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/playstudios/action-release-action/compare/v1.6.1...v1.6.2) (2023-05-11)
+
+
+### Bug Fixes
+
+* Update package.json ([ee390e5](https://github.com/playstudios/action-release-action/commit/ee390e5bc2b29f58fca33eb0c7347cdec0bf0b85))
+
 ## [1.6.0](https://github.com/playstudios/action-release-action/compare/v1.5.1...v1.6.0) (2023-05-10)
 
 
