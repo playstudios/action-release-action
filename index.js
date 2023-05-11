@@ -1,13 +1,14 @@
+const core = require('@actions/core')
 const exec = require('./src/exec')
 const path = require('path')
 
 const run = async () => {
   // Install Dependencies
   {
-    const {stdout, stderr} = await exec('npm --loglevel error ci --only=prod', {
-      cwd: path.resolve(__dirname)
+    const { stdout, stderr } = await exec('npm --loglevel error ci --only=prod', {
+      cwd: path.resolve(__dirname),
     })
-    console.log(stdout)
+    core.info(stdout)
     if (stderr) {
       return Promise.reject(stderr)
     }
@@ -16,4 +17,4 @@ const run = async () => {
   require('./src/index')()
 }
 
-run().catch(console.error)
+run().catch(core.setFailed)

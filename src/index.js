@@ -11,16 +11,12 @@ const semanticRelease = require('semantic-release')
 //const shell = async (command) => execaCommand(command, { shell: true, stdio: 'inherit' })
 const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
-const run = async () => {
-  try {
-    if (core.getInput('clean')) {
-      await clean()
-    } else {
-      await release()
-    }
-  } catch (e) {
-    core.setFailed(e)
+module.exports = () => {
+  if (core.getInput('clean')) {
+    clean()
   }
+  core.debug('Initialization-successful')
+  release().catch(core.setFailed)
 }
 
 const clean = async () => {
