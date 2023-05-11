@@ -1,3 +1,10 @@
+## [1.6.4](https://github.com/playstudios/action-release-action/compare/v1.6.3...v1.6.4) (2023-05-11)
+
+
+### Bug Fixes
+
+* install node module when action run ([#35](https://github.com/playstudios/action-release-action/issues/35)) ([4799c09](https://github.com/playstudios/action-release-action/commit/4799c09c7abe418a1970808695d0c3302736ba9e))
+
 ## [1.6.3](https://github.com/playstudios/action-release-action/compare/v1.6.2...v1.6.3) (2023-05-11)
 
 
