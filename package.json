@@ -11,6 +11,7 @@
     "@vercel/ncc": "^0.36.1",
     "execa": "^5.1.1",
     "util":"0.12.5",
+    "typescript": "5.0.4",
     "semantic-release": "^19.0.5",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/release-notes-generator": "^10.0.3"
