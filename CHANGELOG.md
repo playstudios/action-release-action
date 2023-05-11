@@ -1,3 +1,10 @@
+## [1.6.3](https://github.com/playstudios/action-release-action/compare/v1.6.2...v1.6.3) (2023-05-11)
+
+
+### Bug Fixes
+
+* Revert ([0b90456](https://github.com/playstudios/action-release-action/commit/0b90456a092083cbaf63326fe6d45ac3d61bb5cd))
+
 ## [1.6.2](https://github.com/playstudios/action-release-action/compare/v1.6.1...v1.6.2) (2023-05-11)
 
 
