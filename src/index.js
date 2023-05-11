@@ -111,5 +111,3 @@ const release = async () => {
     await shell(`git push -f origin HEAD:${branch}`)
   }
 }
-
-run()
