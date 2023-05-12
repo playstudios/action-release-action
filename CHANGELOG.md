@@ -1,3 +1,10 @@
+## [1.6.7](https://github.com/playstudios/action-release-action/compare/v1.6.6...v1.6.7) (2023-05-12)
+
+
+### Bug Fixes
+
+* use tag format from input ([#38](https://github.com/playstudios/action-release-action/issues/38)) ([59ca1f8](https://github.com/playstudios/action-release-action/commit/59ca1f8dbc3ff16e163c33efc905d6c9237235d8))
+
 ## [1.6.6](https://github.com/playstudios/action-release-action/compare/v1.6.5...v1.6.6) (2023-05-12)
 
 
