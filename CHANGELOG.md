@@ -1,3 +1,10 @@
+## [1.6.9](https://github.com/playstudios/action-release-action/compare/v1.6.8...v1.6.9) (2023-05-12)
+
+
+### Bug Fixes
+
+* add condition to get proper format release ([#40](https://github.com/playstudios/action-release-action/issues/40)) ([80935a2](https://github.com/playstudios/action-release-action/commit/80935a22f0a7a70c86c6b627e6fcb852a5602ece))
+
 ## [1.6.8](https://github.com/playstudios/action-release-action/compare/v1.6.7...v1.6.8) (2023-05-12)
 
 
