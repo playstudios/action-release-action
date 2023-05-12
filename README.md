@@ -25,7 +25,7 @@ The following example will create a release in the format `X.Y.Z`
       - uses: playstudios/action-release-action@v1
         with:
           github-token: ${{ github.token }}
-          tag-format: '${version}'
+          tag-format: ''
 ```
 
 The following example will create a release in the format `mysuperrelease-X.Y.Z`
@@ -33,7 +33,7 @@ The following example will create a release in the format `mysuperrelease-X.Y.Z`
       - uses: playstudios/action-release-action@v1
         with:
           github-token: ${{ github.token }}
-          tag-format: 'mysuperrelease-${version}'
+          tag-format: 'mysuperrelease-'
 ```
 
 If `tag-format` is not included, the release format is `vX.Y.Z`
