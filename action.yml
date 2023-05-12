@@ -8,6 +8,11 @@ inputs:
   clean:
     description: Clean up obsolete release branches
     required: false
+  tag-format:
+    description: The prefix to use for the git tag. Defaults to 'v'.
+    default: 'v'
+    required: false
+
 runs:
   using: node16
   main: index.js
