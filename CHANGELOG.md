@@ -1,3 +1,10 @@
+## [1.6.8](https://github.com/playstudios/action-release-action/compare/v1.6.7...v1.6.8) (2023-05-12)
+
+
+### Bug Fixes
+
+* change input naming convention ([#39](https://github.com/playstudios/action-release-action/issues/39)) ([0269bde](https://github.com/playstudios/action-release-action/commit/0269bde12e44f7a2269d142953fc2f4192be4458))
+
 ## [1.6.7](https://github.com/playstudios/action-release-action/compare/v1.6.6...v1.6.7) (2023-05-12)
 
 
