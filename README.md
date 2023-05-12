@@ -16,7 +16,7 @@ Preset used is `conventional-changelog-conventionalcommits`.
 >
 > More information can be found [here](https://github.com/semantic-release/semantic-release/blob/master/docs/usage/configuration.md#existing-version-tags)
 
-An optional `tag-format` input can be provided to control the format of the tag created.
+An optional `tag-prefix` input can be provided to control the format of the tag created.
 
 More information can be found [here](https://github.com/semantic-release/semantic-release/blob/master/docs/usage/configuration.md#tagformat)
 
@@ -25,7 +25,7 @@ The following example will create a release in the format `X.Y.Z`
       - uses: playstudios/action-release-action@v1
         with:
           github-token: ${{ github.token }}
-          tag-format: ''
+          tag-prefix: ''
 ```
 
 The following example will create a release in the format `mysuperrelease-X.Y.Z`
@@ -33,10 +33,10 @@ The following example will create a release in the format `mysuperrelease-X.Y.Z`
       - uses: playstudios/action-release-action@v1
         with:
           github-token: ${{ github.token }}
-          tag-format: 'mysuperrelease-'
+          tag-prefix: 'mysuperrelease-'
 ```
 
-If `tag-format` is not included, the release format is `vX.Y.Z`
+If `tag-prefix` is not included, the release format is `vX.Y.Z`
 
 ## Full example using default tag format
 
