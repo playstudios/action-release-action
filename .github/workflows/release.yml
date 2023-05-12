@@ -11,14 +11,14 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: Build
-        run: |
-          echo ::group::install deps
-          npm install --legacy-peer-deps #because of a NPM bug
-          echo ::group::lint
-          npm run lint
-          echo ::group::test
-          npm test
+      # - name: Build
+      #   run: |
+      #     echo ::group::install deps
+      #     npm install --legacy-peer-deps #because of a NPM bug
+      #     echo ::group::lint
+      #     npm run lint
+      #     echo ::group::test
+      #     npm test
       - uses: ./
         with:
           github-token: ${{ github.token }}

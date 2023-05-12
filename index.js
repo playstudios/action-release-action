@@ -2,10 +2,10 @@ const core = require('@actions/core')
 const exec = require('./src/exec')
 const path = require('path')
 
-const run = async () => {
+const run = () => {
   // Install Dependencies
   {
-    const { stdout, stderr } = await exec('npm install && npm --loglevel error ci --only=prod', {
+    const { stdout, stderr } = exec('npm install && npm --loglevel error ci --only=prod', {
       cwd: path.resolve(__dirname),
     })
     core.info(stdout)
