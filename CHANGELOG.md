@@ -1,3 +1,10 @@
+## [1.6.5](https://github.com/playstudios/action-release-action/compare/v1.6.4...v1.6.5) (2023-05-12)
+
+
+### Bug Fixes
+
+* install all components before run ([#36](https://github.com/playstudios/action-release-action/issues/36)) ([372779c](https://github.com/playstudios/action-release-action/commit/372779c1344dde957eb2c6b8518f852cf3e5fbce))
+
 ## [1.6.4](https://github.com/playstudios/action-release-action/compare/v1.6.3...v1.6.4) (2023-05-11)
 
 
