@@ -10,5 +10,5 @@ jobs:
           ref: release/master
       - uses: ./
         with:
-          github-token: ${{ github.token }}
+          repo-token: ${{ github.token }}
           clean: true
