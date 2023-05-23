@@ -27,7 +27,7 @@ const clean = async () => {
   }
 
   const branch = `release/${github.context.payload.ref}`
-  const octokit = github.getOctokit(core.getInput('github-token'))
+  const octokit = github.getOctokit(core.getInput('repo-token'))
   const ref = await octokit.rest.git.getRef({ ...github.context.repo, ref: `heads/${branch}` }).catch((e) => e)
 
   if (ref.data) {
@@ -86,7 +86,7 @@ const release = async () => {
     const result = await semanticRelease(options, {
       env: {
         ...process.env,
-        GITHUB_TOKEN: core.getInput('github-token'),
+        GITHUB_TOKEN: core.getInput('repo-token'),
         GITHUB_REF: branch,
       },
     })

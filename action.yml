@@ -2,7 +2,7 @@ name: Release Action
 description: Release action with semantic release
 author: PlayStudios
 inputs:
-  github-token:
+  repo-token:
     description: GitHub token
     required: true
   clean:
