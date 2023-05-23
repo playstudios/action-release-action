@@ -24,7 +24,7 @@ The following example will create a release in the format `X.Y.Z`
 ```
       - uses: playstudios/action-release-action@v1
         with:
-          github-token: ${{ github.token }}
+          repo-token: ${{ github.token }}
           tag-prefix: ''
 ```
 
@@ -32,7 +32,7 @@ The following example will create a release in the format `mysuperrelease-X.Y.Z`
 ```
       - uses: playstudios/action-release-action@v1
         with:
-          github-token: ${{ github.token }}
+          repo-token: ${{ github.token }}
           tag-prefix: 'mysuperrelease-'
 ```
 
@@ -66,7 +66,7 @@ jobs:
           npm run pack
       - uses: playstudios/action-release-action@v1
         with:
-          github-token: ${{ github.token }}
+          repo-token: ${{ github.token }}
 ```
 
 To clean up obsolete release branches:
@@ -81,6 +81,6 @@ jobs:
     steps:
       - uses: playstudios/action-release-action@v1
         with:
-          github-token: ${{ github.token }}
+          repo-token: ${{ github.token }}
           clean: true
 ```
