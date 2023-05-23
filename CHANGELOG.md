@@ -1,3 +1,10 @@
+## [1.6.10](https://github.com/playstudios/action-release-action/compare/v1.6.9...v1.6.10) (2023-05-23)
+
+
+### Bug Fixes
+
+* change input parameter to repo-token ([#42](https://github.com/playstudios/action-release-action/issues/42)) ([75007aa](https://github.com/playstudios/action-release-action/commit/75007aa26a5c93361ed907e663c1c9fde650c726))
+
 ## [1.6.9](https://github.com/playstudios/action-release-action/compare/v1.6.8...v1.6.9) (2023-05-12)
 
 
