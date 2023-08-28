@@ -61,12 +61,7 @@ const release = async () => {
       preset: 'conventionalcommits',
       tagFormat: core.getInput('tag-prefix') === 'v' ? 'v${version}' : `${core.getInput('tag-prefix')}\${version}`,
       plugins: [
-        [
-          '@semantic-release/commit-analyzer',
-          {
-            preset: 'conventionalcommits',
-          },
-        ],
+        '@semantic-release/commit-analyzer',
         '@semantic-release/release-notes-generator',
         '@semantic-release/github',
         '@semantic-release/changelog',
