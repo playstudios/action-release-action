@@ -76,8 +76,12 @@ const release = async () => {
     const modules = [
       'semantic-release',
       `conventional-changelog-${options.preset}`,
-      ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
     ]
+    try {
+      await shell(`npm i ${modules.join(' ')}`)
+    } catch (e) {
+      core.warning(`attempted to install npm modules but failed, is this a js action?\n\n${e}`)
+    }
     const result = await semanticRelease(options, {
       env: {
         ...process.env,
