@@ -62,11 +62,11 @@ const release = async () => {
       tagFormat: core.getInput('tag-prefix') === 'v' ? 'v${version}' : `${core.getInput('tag-prefix')}\${version}`,
       plugins: [
         '@semantic-release/commit-analyzer@9.0.2',
-        '@semantic-release/release-notes-generator',
-        '@semantic-release/github',
-        '@semantic-release/changelog',
+        '@semantic-release/release-notes-generator@10.0.3',
+        '@semantic-release/github@8.1.0',
+        '@semantic-release/changelog@6.0.3',
         [
-          '@semantic-release/git',
+          '@semantic-release/git@10.0.1',
           {
             assets: ['dist/**', 'CHANGELOG.md'],
           },
