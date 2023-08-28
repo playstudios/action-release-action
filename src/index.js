@@ -73,11 +73,7 @@ const release = async () => {
         ],
       ],
     }
-    const modules = [
-      'semantic-release',
-      `conventional-changelog-${options.preset}`,
-      ...options.plugins.map((x) => (typeof x === 'string' ? x : x[0])),
-    ]
+    const modules = ['semantic-release', `conventional-changelog-${options.preset}`]
     try {
       await shell(`npm i ${modules.join(' ')}`)
     } catch (e) {
