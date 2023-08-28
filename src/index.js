@@ -73,10 +73,7 @@ const release = async () => {
         ],
       ],
     }
-    const modules = [
-      'semantic-release',
-      `conventional-changelog-${options.preset}`
-    ]
+    const modules = ['semantic-release', `conventional-changelog-${options.preset}`]
     try {
       await shell(`npm i ${modules.join(' ')}`)
     } catch (e) {
