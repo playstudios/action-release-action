@@ -1,3 +1,16 @@
+## [1.6.11](https://github.com/playstudios/action-release-action/compare/v1.6.10...v1.6.11) (2023-08-28)
+
+
+### Bug Fixes
+
+* add param preset: conventionalcommits to plugin commit-analyzer ([#51](https://github.com/playstudios/action-release-action/issues/51)) ([2ea3fc5](https://github.com/playstudios/action-release-action/commit/2ea3fc536aaf42a7d1271bbfd0d5c3cefb6019ac))
+* bump semantic release 21.1.1 ([#46](https://github.com/playstudios/action-release-action/issues/46)) ([7d8bf0f](https://github.com/playstudios/action-release-action/commit/7d8bf0f0574fe8ace5aacf32280f558ce1760c56))
+* hardcode all plugin version ([#48](https://github.com/playstudios/action-release-action/issues/48)) ([b6580a4](https://github.com/playstudios/action-release-action/commit/b6580a45b4bf6fd87b23bb0081c208a7dfeae6ae))
+* hardcode commit-analyzer@9.0.2 ([#47](https://github.com/playstudios/action-release-action/issues/47)) ([03e9e04](https://github.com/playstudios/action-release-action/commit/03e9e04ea5aa88adf816999dcfc0365211e96c68))
+* hardcode conventional-changelog-conventionalcommits": "^6.1.0 ([723ebdc](https://github.com/playstudios/action-release-action/commit/723ebdc954d1e98c2c2b4b7119f78b9472083ba0))
+* hardcode plugin version in package-lock and package json ([#49](https://github.com/playstudios/action-release-action/issues/49)) ([e3fabc8](https://github.com/playstudios/action-release-action/commit/e3fabc8cebbf586b521242d10499784d40265ec6))
+* no need install plugin anymore ([#50](https://github.com/playstudios/action-release-action/issues/50)) ([7419e47](https://github.com/playstudios/action-release-action/commit/7419e47c0b9f16454bac98630754da9d3a05e39d))
+
 ## [1.6.10](https://github.com/playstudios/action-release-action/compare/v1.6.9...v1.6.10) (2023-05-23)
 
 
