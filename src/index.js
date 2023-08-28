@@ -64,8 +64,8 @@ const release = async () => {
         [
           '@semantic-release/commit-analyzer',
           {
-            "preset": "conventionalcommits",
-          }
+            preset: 'conventionalcommits',
+          },
         ],
         '@semantic-release/release-notes-generator',
         '@semantic-release/github',
