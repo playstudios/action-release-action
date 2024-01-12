@@ -1,10 +1,10 @@
 import { execa } from 'execa'
-import { core } from '@actions/core'
-import { github } from '@actions/github'
+import * as core from '@actions/core'
+import * as github from '@actions/github'
 
-const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
+const shell = async (command) => execa(command, { shell: true, stdio: 'inherit' })
 
-module.exports = () => {
+export const releaseActionMain = () => {
   if (core.getInput('clean')) {
     clean()
   }
