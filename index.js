@@ -1,11 +1,11 @@
-const exec = require('./src/exec')
-const path = require('path')
+import { resolve } from 'path'
+import { exec } from "./src/exec.js"
 
 const run = async () => {
   // Install Dependencies
   {
     const { stdout, stderr } = await exec('npm install && npm --loglevel error ci --only=prod', {
-      cwd: path.resolve(__dirname),
+      cwd: resolve(__dirname),
     })
     console.log(stdout)
     if (stderr) {

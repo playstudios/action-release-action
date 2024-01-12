@@ -1,7 +1,6 @@
-const core = require('@actions/core')
-const github = require('@actions/github')
-const execa = require('execa')
-const semanticRelease = require('semantic-release')
+import { execa } from 'execa'
+import { core } from '@actions/core'
+import { github } from '@actions/github'
 
 const shell = async (command) => execa.command(command, { shell: true, stdio: 'inherit' })
 
@@ -41,6 +40,7 @@ const clean = async () => {
 }
 
 const release = async () => {
+  const semanticRelease = await import('semantic-release')
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
   core.info(`current ref is ${branch}`)
 
