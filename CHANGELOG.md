@@ -1,3 +1,15 @@
+## [1.7.0](https://github.com/playstudios/action-release-action/compare/v1.6.11...v1.7.0) (2024-01-16)
+
+
+### Features
+
+* DEP-630 - ESM update. fixes ([9111d5c](https://github.com/playstudios/action-release-action/commit/9111d5c75d8a8d65359c91e1ad820ff63039b560))
+
+
+### Bug Fixes
+
+* fixed constant import from semantic-release module ([8123269](https://github.com/playstudios/action-release-action/commit/8123269fa3bb5c6a6cada8ee99bbe20799c28af3))
+
 ## [1.6.11](https://github.com/playstudios/action-release-action/compare/v1.6.10...v1.6.11) (2023-08-28)
 
 
