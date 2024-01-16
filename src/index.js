@@ -1,6 +1,7 @@
 import { execa } from 'execa'
 import * as core from '@actions/core'
 import * as github from '@actions/github'
+import * as semanticRelease from 'semantic-release'
 
 const shell = async (command) => execa(command, { shell: true, stdio: 'inherit' })
 
@@ -40,7 +41,6 @@ const clean = async () => {
 }
 
 const release = async () => {
-  const semanticRelease = await import('semantic-release')
   const branch = github.context.ref.replace(/^refs\/heads/, 'release')
   core.info(`current ref is ${branch}`)
 
@@ -48,7 +48,7 @@ const release = async () => {
     await shell('git stash -u')
     await shell(`git checkout ${branch} || { git checkout -b ${branch} && git push -u origin ${branch}; }`)
     await shell(
-      `git -c user.name='${semanticRelease.COMMIT_NAME}' -c user.email='${semanticRelease.COMMIT_EMAIL}' merge -`,
+      `git -c user.name='${semanticRelease.default.COMMIT_NAME}' -c user.email='${semanticRelease.default.COMMIT_EMAIL}' merge -`,
     )
     try {
       await shell('git checkout stash^3 .')
@@ -79,7 +79,7 @@ const release = async () => {
     } catch (e) {
       core.warning(`attempted to install npm modules but failed, is this a js action?\n\n${e}`)
     }
-    const result = await semanticRelease(options, {
+    const result = await semanticRelease.default(options, {
       env: {
         ...process.env,
         GITHUB_TOKEN: core.getInput('repo-token'),
@@ -93,7 +93,7 @@ const release = async () => {
     await shell('git add -A')
     try {
       await shell(
-        `git -c user.name='${semanticRelease.COMMIT_NAME}' -c user.email='${semanticRelease.COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
+        `git -c user.name='${semanticRelease.default.COMMIT_NAME}' -c user.email='${semanticRelease.default.COMMIT_EMAIL}' commit -m 'chore(release): generate dist files'`,
       )
     } catch (e) {
       core.warning(`i've tried to commit something but it didn't work, is there actually anything to commit?\n\n ${e}`)
