@@ -1,3 +1,15 @@
+## [1.8.0](https://github.com/playstudios/action-release-action/compare/v1.7.0...v1.8.0) (2024-01-17)
+
+
+### Features
+
+* revert to previous version ([520a114](https://github.com/playstudios/action-release-action/commit/520a114bdc1d3d9bc8c4d4cc0ac0632c5dc1df25))
+
+
+### Bug Fixes
+
+* move index import after the node dependency import ([e10bcdc](https://github.com/playstudios/action-release-action/commit/e10bcdc56286559682cc0ee39a96d1aa63349d9d))
+
 ## [1.7.0](https://github.com/playstudios/action-release-action/compare/v1.6.11...v1.7.0) (2024-01-16)
 
 
