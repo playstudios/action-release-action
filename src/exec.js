@@ -1,4 +1,2 @@
-import { promisify } from 'util'
-import { exec as execFunction } from 'child_process'
-
-export const exec = promisify(execFunction)
+const util = require('util')
+module.exports = util.promisify(require('child_process').exec)
