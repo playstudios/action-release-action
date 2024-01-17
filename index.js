@@ -1,14 +1,11 @@
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path'
-import { exec } from "./src/exec.js"
-import { releaseActionMain } from "./src/index.js"
+const exec = require('./src/exec')
+const path = require('path')
 
 const run = async () => {
   // Install Dependencies
   {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
     const { stdout, stderr } = await exec('npm install && npm --loglevel error ci --only=prod', {
-      cwd: resolve(__dirname),
+      cwd: path.resolve(__dirname),
     })
     console.log(stdout)
     if (stderr) {
@@ -16,7 +13,7 @@ const run = async () => {
     }
   }
 
-  releaseActionMain()
+  require('./src/index')()
 }
 
 run().catch(console.error)

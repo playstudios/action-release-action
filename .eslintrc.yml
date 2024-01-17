@@ -12,7 +12,6 @@ rules:
   camelcase: off
   github/no-then: off
   import/no-commonjs: off
-  import/no-namespace: off
 overrides:
   - files: '**/*.test.js'
     plugins:
