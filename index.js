@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path'
 import { exec } from "./src/exec.js"
-import { releaseActionMain } from "./src/index.js"
 
 const run = async () => {
   // Install Dependencies
@@ -16,6 +15,7 @@ const run = async () => {
     }
   }
 
+  releaseActionMain = await import('./src/index.js')
   releaseActionMain()
 }
 
