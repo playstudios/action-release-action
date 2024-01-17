@@ -15,7 +15,7 @@ const run = async () => {
     }
   }
 
-  releaseActionMain = await import('./src/index.js')
+  const { default: releaseActionMain } = await import('./src/index.js')
   releaseActionMain()
 }
 

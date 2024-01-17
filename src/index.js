@@ -5,7 +5,7 @@ import * as semanticRelease from 'semantic-release'
 
 const shell = async (command) => execa(command, { shell: true, stdio: 'inherit' })
 
-export const releaseActionMain = () => {
+export default function releaseActionMain() {
   if (core.getInput('clean')) {
     clean()
   }
