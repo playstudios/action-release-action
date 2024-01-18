@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/playstudios/action-release-action/compare/v2.0.0...v2.0.1) (2024-01-18)
+
+
+### Bug Fixes
+
+* changed action exit condition to take into account ([90003c2](https://github.com/playstudios/action-release-action/commit/90003c2ec625a13f250e1b9021757136ce42b02f))
+
 ## [2.0.0](https://github.com/playstudios/action-release-action/compare/v1.8.0...v2.0.0) (2024-01-18)
 
 
