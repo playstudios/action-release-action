@@ -6,12 +6,13 @@ const run = async () => {
   // Install Dependencies
   {
     const __dirname = dirname(fileURLToPath(import.meta.url));
-    const { stdout, stderr } = await exec('npm install && npm --loglevel error ci --only=prod', {
+    const { error, stdout, _ } = await exec('npm install && npm --loglevel error ci --only=prod', {
       cwd: resolve(__dirname),
     })
     console.log(stdout)
-    if (stderr) {
-      return Promise.reject(stderr)
+    if (error) {
+      console.log('Got ERROR')
+      return Promise.reject(error)
     }
   }
 
