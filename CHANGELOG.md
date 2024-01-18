@@ -1,3 +1,14 @@
+## [2.0.0](https://github.com/playstudios/action-release-action/compare/v1.8.0...v2.0.0) (2024-01-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* forcing major version upgrade to roll out to pipelines gradually
+
+### Features
+
+* upgrading dependencies and migrating to node20. revised changes and fixed dependency errors. ([af549dd](https://github.com/playstudios/action-release-action/commit/af549dd85ff057213022d13a4cd2654d6c323b6c))
+
 ## [1.8.0](https://github.com/playstudios/action-release-action/compare/v1.7.0...v1.8.0) (2024-01-17)
 
 
