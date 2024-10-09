@@ -12,6 +12,10 @@ inputs:
     description: The prefix to use for the git tag. Defaults to 'v'.
     default: 'v'
     required: false
+  assets:
+    description: The glob pattern to use to find assets to upload to the release
+    required: false
+    default: ''
 
 runs:
   using: node20
