@@ -89,11 +89,9 @@ jobs:
 Input require to include assets to release, using `assets` that accept string with the list files and folders, see example below.
 
 > [!Note]
-> Can be a glob or and Array of globs and Objects with the following properties
-
->[!Information]
-> More information about assets bundle with github release can be found [here](https://github.com/semantic-release/github#assets)
-The following example will create release with assets Binary files
+> The assets can be a Glob or and Array of globs and Objects,
+> more information about assets bundle with github release can be found [here](https://github.com/semantic-release/github#assets)
+### The following example will create release with assets Binary files
 ```
 name: Release
 on:
