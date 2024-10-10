@@ -1,3 +1,10 @@
+## [2.1.0](https://github.com/playstudios/action-release-action/compare/v2.0.1...v2.1.0) (2024-10-10)
+
+
+### Features
+
+* do-1636 add assets to release ([#60](https://github.com/playstudios/action-release-action/issues/60)) ([643d2da](https://github.com/playstudios/action-release-action/commit/643d2daebcca12118011453fafcf85a26df3f94c))
+
 ## [2.0.1](https://github.com/playstudios/action-release-action/compare/v2.0.0...v2.0.1) (2024-01-18)
 
 
