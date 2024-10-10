@@ -63,7 +63,15 @@ const release = async () => {
       plugins: [
         '@semantic-release/commit-analyzer',
         '@semantic-release/release-notes-generator',
-        '@semantic-release/github',
+        [
+          '@semantic-release/github',
+          {
+            assets: core
+              .getInput('assets')
+              .split(',')
+              .map((asset) => asset.trim()),
+          },
+        ],
         '@semantic-release/changelog',
         [
           '@semantic-release/git',
