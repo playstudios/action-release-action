@@ -7,7 +7,7 @@ const shell = async (command) => execa(command, { shell: true, stdio: 'inherit' 
 
 export default async function releaseActionMain() {
   if (core.getInput('clean')) {
-    await clean().catch(core.setFailed)  // Handle errors properly
+    await clean().catch(core.setFailed)
     return
   }
   core.debug('Initialization-successful')
