@@ -30,7 +30,7 @@ const clean = async () => {
   const octokit = github.getOctokit(core.getInput('repo-token'))
   const ref = await octokit.rest.git.getRef({ ...github.context.repo, ref: `heads/${branch}` }).catch((e) => e)
 
-  core.info("Ref data:")
+  core.info('Ref data:')
   core.info(ref.data)
 
   if (ref.data) {
