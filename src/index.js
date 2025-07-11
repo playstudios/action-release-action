@@ -31,15 +31,12 @@ const clean = async () => {
   const octokit = github.getOctokit(core.getInput('repo-token'))
   const ref = await octokit.rest.git.getRef({ ...github.context.repo, ref: `heads/${branch}` }).catch((e) => e)
 
-  core.info(`ref data: ${ref.data ? JSON.stringify(ref.data) : 'No data'}`)
-
   if (ref.data) {
     core.info(`deleting release branch ${ref.data.ref}`)
     await octokit.rest.git.deleteRef({ ...github.context.repo, ref: `heads/${branch}` })
   } else if (ref.status === '404') {
     core.info('release branch of deleted branch not found')
   } else {
-    core.info(`could not delete release branch ${branch}, got error: ${ref}`)
     throw ref
   }
 }
