@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/playstudios/action-release-action/compare/v2.2.0...v2.2.1) (2025-07-14)
+
+
+### Bug Fixes
+
+* DO-3174: Fix clean up function ([#62](https://github.com/playstudios/action-release-action/issues/62)) ([c9f21ca](https://github.com/playstudios/action-release-action/commit/c9f21caf651e7c51c34a863ba8449011c3c82ebc))
+
 ## [2.2.0](https://github.com/playstudios/action-release-action/compare/v2.1.0...v2.2.0) (2024-10-10)
 
 
