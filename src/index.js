@@ -5,9 +5,10 @@ import * as semanticRelease from 'semantic-release'
 
 const shell = async (command) => execa(command, { shell: true, stdio: 'inherit' })
 
-export default function releaseActionMain() {
+export default async function releaseActionMain() {
   if (core.getInput('clean')) {
-    clean()
+    await clean().catch(core.setFailed)
+    return
   }
   core.debug('Initialization-successful')
   release().catch(core.setFailed)
